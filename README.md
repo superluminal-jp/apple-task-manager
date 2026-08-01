@@ -47,52 +47,60 @@ Claude が代替すること**である。
 
 | | Reminders | Notes |
 | --- | --- | --- |
-| 公開API | **EventKit**（正式framework） | **なし**（macOS の AppleScript のみ、iOS 不可） |
-| データ形状 | リスト／期日／開始日／完了日／優先度 | 自由テキスト（本文は HTML） |
+| 自動化経路 | AppleScript ／ EventKit | **AppleScript のみ**（相当する framework なし、iOS 不可） |
+| データ形状 | リスト／期日／完了日／優先度 | 自由テキスト（本文は HTML） |
 | 機械的な問い合わせ | 可能 | 実質不可 |
 | 担当する作成物 | Sprint Backlog、障害の期限 | Sprint Goal、Definition of Done、レトロ記録、障害記録 |
+
+Notes に EventKit 相当の framework が無いため、**両アプリを1つの機構で扱える
+経路は macOS 同梱の `osascript`（AppleScript／JXA）だけ**である。これを採用し、
+外部依存をゼロにする（[ADR 0003](docs/adr/0003-applescript-only-automation.md)）。
 
 **Reminders = 構造化された記録源（system of record）**、
 **Notes = ナラティブ層**、
 **Claude + `scrum-master` スキル = 外部検査役**。
 
-### なぜ Reminders を記録源にするのが最も効率的か
+### なぜ Reminders を記録源にするか
 
 `scrum-master` スキルの `scripts/flow_metrics.py` が要求する入力は
-`item_id,started_at,completed_at` の3列である。Reminders はこの3つを
-**標準フィールドとしてネイティブに持つ**。
+`item_id,started_at,completed_at` の3列である。Reminders はこのうち
+**2列をネイティブに持ち、残る1列は自前で記録する**。
 
-| スクリプトの要求 | Reminders / EventKit のフィールド |
+| スクリプトの要求 | Reminders 側 |
 | --- | --- |
-| `item_id` | `calendarItemIdentifier` |
-| `started_at` | `startDateComponents` |
-| `completed_at` | `completionDate` |
+| `item_id` | `id`（text, read-only）— ネイティブ |
+| `completed_at` | `completion date`（date）— ネイティブ |
+| `started_at` | **対応フィールドなし** → `body` に自前で記録 |
 
-つまり**既存スクリプトを1行も変えずに**実データの Cycle Time 分布・
-週次 Throughput・WIP 推移が出る。これが2つのアプリを結ぶ最も安い接続点であり、
-「指標を創作しない」という原則を守れる唯一の経路でもある。
+`started_at` に使える標準フィールドは存在しない。EventKit の
+`startDateComponents` は**Reminders の UI が無視する**うえ、アプリで作成した
+reminder では `nil` になり、AppleScript 辞書には start date 相当の
+プロパティがそもそも無い。`creation date` の代用も不可で、それは Cycle Time
+ではなく Lead Time を測ってしまう。
 
-副産物として、状態管理に余分なリストが不要になる。
-**開始日あり＝着手済（WIP）**、**`isCompleted`＝完了**。Work Item Age も算出できる。
-
-### 設計を縛る制約：EventKit はタグを公開していない
-
-公開 API である EventKit は **tags / subtasks / sections / smart lists /
-flags / 添付を公開していない**。`remctl` などのツールはこれを private framework
-（ReminderKit）と SQLite 直読みで回避している。
-
-**帰結：タグを前提にした設計にしてはならない。** スプリント番号やサイズは
-リスト分割と、reminder の `notes` 本文に置く機械可読ブロックで表現する。
+そのため着手時刻は `body` の機械可読ブロックに書く。タグ・サブタスク・
+セクションは Apple の公開経路（AppleScript / EventKit のいずれ）にも
+公開されていないため、スプリント番号やサイズも同じブロックに入れる。
 
 ```
 --- scrum ---
 sprint: 7
 size: M
+started: 2026-08-01
 ---
 ```
 
-private API 系ツールは魅力的だが、OS アップデートで壊れる前提の依存になる。
-初期実装では採用しない（[ADR 0001](docs/adr/0001-reminders-as-system-of-record.md)）。
+これで `flow_metrics.py` は**無改造のまま**実データに適用でき、Cycle Time 分布・
+週次 Throughput・WIP 推移が出る。「指標を創作しない」を守れる経路が確保される。
+
+状態判定は次のとおり。**`started:` があり未完了＝着手済（WIP）**、
+**`completed`＝完了**。`creation date` は保持し、Lead Time（作成→完了）を
+Cycle Time（着手→完了）と別指標として扱う。両者の差は Product Backlog での
+待ち時間そのもので、それ自体が診断に使える。
+
+**運用上の代償**：着手を明示的に記録する一手間が発生する。忘れた項目は
+Cycle Time の母数から落ちるため、**着手漏れの検出（未完了かつ `started:` なし
+の一覧）は実装の必須要件**とする（[ADR 0001](docs/adr/0001-reminders-as-system-of-record.md)）。
 
 ---
 
@@ -101,6 +109,10 @@ private API 系ツールは魅力的だが、OS アップデートで壊れる�
 - **Mac 常用・iPhone は補助**。Notes への書き込み自動化は macOS の AppleScript
   に限られるため、Claude による Notes 書き込みは Mac 上でのみ行う。
 - iPhone は Reminders への項目追加と閲覧を担う（iCloud 同期で Mac に反映）。
+  iPhone 側の入力補助のみ Shortcuts を使う — 唯一の現実的な経路であり、
+  読み書きの中心ではない。
+- **依存ゼロ**。パッケージマニフェスト、ロックファイル、ビルド手順を持たない。
+  クローンして `osascript` を叩けば動く状態を維持する。
 - 管理対象は**特定の1プロダクト／プロジェクト**。したがって Product Goal と
   Sprint Goal が本来の意味で機能する。
 
@@ -150,7 +162,9 @@ PO 役と Developers 役を**同一の会話**で Claude に演じさせると�
 
 ### Sprint 1 — 薄い縦切り（1スプリント回すのに必要な最小限）
 
-- Reminders を Sprint Backlog の記録源にする読み出し経路
+- Reminders を Sprint Backlog の記録源にする読み出し経路（`osascript`）
+- `body` メタデータブロックの読み書きと、**着手漏れ検出**
+  （未完了かつ `started:` なしの一覧）
 - `flow_metrics.py` に無改造で食わせる変換
 - Notes に Sprint Goal / Definition of Done / レトロ記録
 - **決定権の明文化**（Notes 上の1枚）— どの判断を PO の帽子で下すか、
@@ -186,15 +200,15 @@ Sprint 1 終了時点で確認する。
 正直に記録する。以下は本設計を書いた環境（Linux コンテナ、macOS なし）では
 検証できなかった。
 
-- `EKCalendarItem.url` が利用可能か — Apple 公式ドキュメントページが
-  JavaScript 描画のため取得できず未確認。`notes` 本文に情報を置く設計は
-  この結果に依存しない。
-- AppleScript による Notes の読み書きの実挙動（本文が HTML であることの
-  取り扱い、チェックリストの可否）。
-- Reminders CLI／MCP のどれを採用するか。`--format json` と正規 ID を返す
-  経路が必要。
-- **本設計に含まれるコードは一切この環境で実行検証されていない。**
-  実装は macOS 上で行う。
+- AppleScript 辞書のプロパティは公開資料で確認したが、**実挙動は未確認**。
+  特に Reminders の `completion date` が確実に埋まるか、`id` が iCloud 同期を
+  跨いで安定か。
+- Notes の読み書きの実挙動（`body` が HTML であることの取り扱い、
+  チェックリストの可否）。`plaintext` プロパティの有無は資料が一致せず未確認。
+- **TCC（Automation 許可）の挙動**。初回実行時に Reminders/Notes を制御する
+  許可の対話的承認が必要で、ヘッドレス実行で詰まる可能性がある。
+- **本設計に含まれるコードは一切この環境で実行検証されていない**
+  （Linux コンテナ、macOS なし）。実装は macOS 上で行う。
 
 ---
 
@@ -203,9 +217,17 @@ Sprint 1 終了時点で確認する。
 - Scrum Guide 2020（`my-claude-code` の
   `.claude/skills/scrum-master/references/sources.md` の `[SG20]`）
 - `scrum-master` スキル本体 — `my-claude-code/.claude/skills/scrum-master/`
-- [EventKit](https://developer.apple.com/documentation/eventkit) —
-  Reminders の公開 API
-- [RemCTL の紹介記事（MacStories）](https://www.macstories.net/stories/introducing-remctl-the-power-user-reminders-cli-for-macos-and-ai-agents/)
-  — EventKit がタグ・サブタスク等を公開していないことの出典
-- [keith/reminders-cli](https://github.com/keith/reminders-cli)
+- [Demonstration of using AppleScript with Reminders.app](https://gist.github.com/n8henrie/c3a5bf270b8200e33591)
+  — Reminders の AppleScript プロパティの確認元
 - [The Notes Application — AppleScript](https://www.macosxautomation.com/applescript/notes/index.html)
+  — Notes の AppleScript 辞書
+- [`startDateComponents`](https://developer.apple.com/documentation/eventkit/ekreminder/startdatecomponents)
+  と [UI が無視することの報告](https://developer.apple.com/forums/thread/676018)
+- [RemCTL の紹介記事（MacStories）](https://www.macstories.net/stories/introducing-remctl-the-power-user-reminders-cli-for-macos-and-ai-agents/)
+  — タグ・サブタスク等が公開経路に無いことの出典
+
+### 意思決定記録
+
+- [ADR 0001](docs/adr/0001-reminders-as-system-of-record.md) — 記録源とデータモデル
+- [ADR 0002](docs/adr/0002-role-separation-via-subagents.md) — 役割分離の機構
+- [ADR 0003](docs/adr/0003-applescript-only-automation.md) — 自動化経路と依存方針
