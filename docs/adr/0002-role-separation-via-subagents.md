@@ -92,6 +92,14 @@ Guide はアカウンタビリティを人に割り当てる（「プロダク�
 - 中立：`.claude/agents/` を `my-claude-code` に新設する場合、その配布機構は
   同リポジトリ側の決定であり、そこで別途 ADR が必要になる。本 ADR は
   他リポジトリの構造を先に決めない。
+- **後から判明した制約**：`my-claude-code` は本設計の直前のコミットで
+  `scrum-master` から solo/個人利用の記述を削除しており（BREAKING CHANGE：
+  personal/solo Scrum Master requests を自動ルーティングしない）、
+  `skill-routing.md` に solo/personal/個人 の記述は1件も無い。
+  本決定の方向——個人運用の作法を共有スキルに持たせない——を独立に裏付ける
+  一方で、**個人スクラムの相談が `scrum-master` に自動ルーティングされない**
+  ことを意味する。検査役が自動で立ち上がる前提は成り立たないため、
+  本システム側が入口を用意する必要がある。入口の形は Sprint 1 で決める。
 
 ## Confirmation
 

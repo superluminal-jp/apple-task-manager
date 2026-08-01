@@ -90,8 +90,14 @@ started: 2026-08-01
 ---
 ```
 
-これで `flow_metrics.py` は**無改造のまま**実データに適用でき、Cycle Time 分布・
-週次 Throughput・WIP 推移が出る。「指標を創作しない」を守れる経路が確保される。
+これで `flow_metrics.py` を**フォークせずそのまま**実データに適用でき、
+Cycle Time 分布・Work Item Age・週次 Throughput・WIP 推移が出る。
+「指標を創作しない」を守れる経路が確保される。
+
+CSV を組み立てるとき `--as-of YYYY-MM-DD` を必ず渡す。Work Item Age の基準日と
+週範囲がこれで決まり、同じデータから常に同じ結果が出る。Daily の検査で使うのは
+**Work Item Age**で、SLE を超えた進行中項目が停滞として印付けされる
+（完了項目の Cycle Time は事後の分布であり、今日動かせる項目を示さない）。
 
 状態判定は次のとおり。**`started:` があり未完了＝着手済（WIP）**、
 **`completed`＝完了**。`creation date` は保持し、Lead Time（作成→完了）を
@@ -153,6 +159,24 @@ PO 役と Developers 役を**同一の会話**で Claude に演じさせると�
 なお、この選択には `my-claude-code` 側のインフラ費用がある。同リポジトリには
 現時点で `.claude/agents/` が存在せず、`install.sh` の配布対象は
 `CUSTOM_SKILLS` の8スキルのみで、エージェントの配布経路がない。
+
+### 前提の確認：`scrum-master` は個人利用を自動ルーティングしない
+
+`my-claude-code` は本設計の直前のコミットで、`scrum-master` スキルから
+solo/個人利用の記述を意図的に削除している（`references/solo-practice.md` を削除し、
+`skill-routing.md`・`.claude/CLAUDE.md`・`.codex/AGENTS.md`・README の宣言を揃えた
+BREAKING CHANGE：「scrum-master no longer auto-routes personal/solo Scrum Master
+requests (weekly planning, daily check-ins, solo retrospectives)」）。
+`skill-routing.md` に solo/personal/個人 の記述は現在1件も無い。
+
+これは ADR 0002 の判断（役割別スキルを追加しない）と**同じ方向を独立に裏付ける**
+——個人運用の作法を共有スキルに持たせない、という判断がすでに下されている。
+
+同時に本設計への制約になる。**個人スクラムの相談は `scrum-master` に自動で
+ルーティングされない。** したがって本システム側が入口を用意する必要がある
+（明示的な呼び出し、または apple-task-manager 側のエントリポイント）。
+「Claude が検査役として自動で立ち上がる」ことを前提にしてはならない。
+Sprint 1 でこの入口の形を決める。
 
 ---
 
