@@ -5,9 +5,9 @@ Apple Reminders と Apple Notes を記録源に、`scrum-master` スキルを検
 必要なものはすべてこのリポジトリにある。
 
 データ側の経路は `.claude/` に実装済み（§4-bis）で、**macOS上のビルド・
-基本操作・Scrumワークスペース作成まで実機検証済み**（§7）。運用面——実際の
-決定権の記入、役割別サブエージェント、実利用者との接点——は未着手で、
-Sprint 1 の作業である。
+基本操作・Scrumワークスペース作成まで実機検証済み**（§7）。役割別の
+`product-owner-perspective` / `developers-perspective` も実装済み。残る運用面は
+実際の決定権の記入、iCloud同期後の識別子検証、実利用者との接点である。
 
 ---
 
@@ -188,9 +188,21 @@ ADR 0002 は「`my-claude-code` に `.claude/agents/` が存在せず、`install
 特定のタスクアプリの配線を抱え、参照元のリポジトリが参照する側の都合で
 書き換わっていく。ADR 0005 がその経緯と却下理由を記録している。
 
-PO 役・Developers 役サブエージェントを追加する際も、`.claude/agents/` に
-ファイルを1つ置くだけである。両者はまだ書かれていないため、Sprint 1 の
-作業項目としては残る。
+PO 役・Developers 役は、`.claude/agents/` の
+`product-owner-perspective.md` / `developers-perspective.md` として実装した。
+どちらも `Read` / `Grep` / `Glob` だけを持ち、Appleアプリを直接読み書きしない。
+前者にはProduct Goal・利用者/成果の証拠・候補項目、後者には候補Sprint Goal・
+Definition of Done・容量実績・技術/品質制約を渡す。相手のレポートを含めた場合は
+「独立した視点」として扱わず、別コンテキストでやり直す。
+
+実行順は次のとおり。
+
+1. `scrum-master` スキルを明示的に呼ぶ。
+2. 必要な事実だけをAppleオペレーターから取得する。
+3. `product-owner-perspective` と `developers-perspective` を**別コンテキスト**で
+   起動し、両方が完了するまで相手のレポートを渡さない。
+4. 両レポートの事実・推論・仮定・対立・証拠不足を比較し、次の検査を決める。
+5. **最終判断は人間が行う。** エージェントは視点であり、アカウンタビリティではない。
 
 ### 前提の確認：`scrum-master` は個人利用を自動ルーティングしない
 
@@ -205,16 +217,9 @@ requests (weekly planning, daily check-ins, solo retrospectives)」）。
 ——個人運用の作法を共有スキルに持たせない、という判断がすでに下されている。
 
 同時に本設計への制約になる。**個人スクラムの相談は `scrum-master` に自動で
-ルーティングされない。** したがって本システム側が入口を用意する必要がある
-（明示的な呼び出し、または apple-task-manager 側のエントリポイント）。
-「Claude が検査役として自動で立ち上がる」ことを前提にしてはならない。
-Sprint 1 でこの入口の形を決める。
-
-**この制約は変わっていない。** 用意したのはデータ側の入口だけである（次節）。
-`my-claude-code` のルーティング表には手を触れていないため、「今スプリント
-どう？」と書いて `scrum-master` が自動で立ち上がることはない。検査役を呼ぶのは
-依然として利用者の明示的な操作である。本リポジトリの
-[`CLAUDE.md`](CLAUDE.md) にもそう明記してある。
+ルーティングされない。** `my-claude-code` のルーティング表は変更せず、本リポジトリの
+[`CLAUDE.md`](CLAUDE.md) に上記の明示的な入口を実装した。「今スプリントどう？」
+だけで自動起動するのではなく、`scrum-master` と2つの役割視点を指定して呼ぶ。
 
 ---
 
@@ -322,6 +327,9 @@ Sprint Retrospectiveの6つはScrum Guideで定義されたコミットメント
   `tests/run-apple-operators.sh` の 120 件で検証済み。`scrum_block.py` の CSV 列と
   `flow_metrics.py` の入力は、**両方が本リポジトリにあるため実体同士を
   突き合わせる**（リテラルを信じない）。
+- `product-owner-perspective` / `developers-perspective` のfrontmatter、読み取り専用
+  tools、非対称ブリーフ、意思決定境界、アカウンタビリティの但し書き、
+  `CLAUDE.md` の別コンテキスト配線は `tests/run-scrum-role-agents.sh` の8件で検証済み。
 - **`remind-cli` は macOS でビルド・実行済み。** リスト取得、作成、更新、完了を
   実データで確認し、EventKit が `completionDate` を設定することも確認した。
   iCloud 同期を跨いだ `externalId` の安定性は未検証である。
@@ -353,8 +361,8 @@ Sprint Retrospectiveの6つはScrum Guideで定義されたコミットメント
   `completionDate` は確認済みだが、同期後の識別子は時間を置いた検証が要る。
 - **決定権の明文化**（Notes 上の1枚）— どの判断を PO の帽子で下すか、
   いつ切り替えるか。役割分離の効果の大半はここで出る
-- PO 役・Developers 役サブエージェントの初版（非対称なブリーフ）——
-  `.claude/agents/` にファイルを1つ置くだけ。配布機構は要らない
+- ~~PO 役・Developers 役サブエージェントの初版（非対称なブリーフ）~~
+  → `product-owner-perspective` / `developers-perspective` と別コンテキスト配線を実装済み
 - **実在の利用者との接点を1回スケジュール**
 
 ### Sprint 2 — 判断ポイント

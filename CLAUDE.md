@@ -40,6 +40,27 @@ Scrum の相談——スプリントの検査、Sprint Goal の吟味、レト�
 ルーティング定義は個人利用を対象にしておらず、vendoring したコピーでも
 それを書き換えていない。呼ぶのは利用者の明示的な操作である（README §4）。
 
+### 役割視点は別コンテキストで検査する
+
+価値と実現可能性の両方を検査するときは、同じ会話でPO役とDevelopers役を
+演じ分けない。次の順で実行する。
+
+1. `scrum-master` スキルを明示的に読み込む。
+2. 必要な記録だけを `apple-reminders-operator` と `apple-notes-operator` に取得させる。
+3. PO側にはProduct Goal、利用者・ステークホルダーの証拠、成果の証拠、候補項目を
+   渡し、`product-owner-perspective` を**別コンテキスト**で起動する。
+4. Developers側には候補Sprint Goal、候補項目、Definition of Done、容量実績、
+   技術・品質制約を渡し、`developers-perspective` を別コンテキストで起動する。
+5. 両者が完了するまで、**相手のレポートを渡さない**。片方の結論を要約して
+   混ぜることも、同じ親会話の全履歴を渡すこともしない。
+6. 両レポートの事実、推論、仮定、対立、証拠不足を `scrum-master` の規範で
+   比較し、次の検査機会を示す。**最終判断は人間**に返す。
+
+両エージェントはアカウンタビリティではなく助言用の視点である。合意しても
+独立した根拠を並べ、対立しても偽の合意に丸めない。どちらかのブリーフに相手の
+レポートが入った場合、その結果を独立した検査として扱わず、新しいコンテキストで
+やり直す。
+
 ### データアクセスは委譲する
 
 記録源の中身を本体の会話に読み込まない。リスト全件の JSON やノート本文の
@@ -50,10 +71,12 @@ HTML は、必要なのは結論だけなのに以後のセッション全体を
 | `apple-reminders-operator` | Reminders 上の Sprint Backlog。取得・作成・完了、`item_id,started_at,completed_at` への変換、`flow_metrics.py` の実行まで行い指標だけを返す |
 | `apple-notes-operator` | Notes 上の Sprint Goal、Definition of Done、レトロ記録、障害記録の読み書き |
 
-**委譲するのはデータアクセスだけで、判断は委譲しない。** Sprint Goal が
+**Appleオペレーターに委譲するのはデータアクセスだけで、判断は委譲しない。** Sprint Goal が
 作業一覧の言い換えになっていないかの検査、停滞項目の解釈、改善実験の設計、
 アカウンタビリティの境界——これらは `scrum-master` の仕事として残る。
-サブエージェントは事実を持ってくるだけで、何も検査しない。
+データアクセス用サブエージェントは事実を持ってくるだけで、何も検査しない。
+役割視点エージェントは、渡された限定的な事実だけを検査し、Appleアプリへ直接
+アクセスしない。
 
 **指標を受け取ったら、必ず着手記録のない項目の件数を併せて報告する。**
 着手が記録されていない項目は Cycle Time の母数から落ちる。母数を伏せた
@@ -91,6 +114,7 @@ append のみ）、これは指示ではなく構造である。インライン 
 bash tests/run-scrum-block.sh       # scrum_block.py の単体テスト
 bash tests/run-flow-metrics.sh      # flow_metrics.py の単体テスト（vendoring 分）
 bash tests/run-apple-operators.sh   # 成果物間の契約
+bash tests/run-scrum-role-agents.sh # 役割視点と別コンテキスト配線の契約
 ```
 
 いずれも決定的で macOS を必要としない。**ネイティブコードはどちらのスイートでも
