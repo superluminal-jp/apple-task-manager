@@ -156,9 +156,19 @@ PO 役と Developers 役を**同一の会話**で Claude に演じさせると�
 `developers` スキルを追加する案は採らない
 （[ADR 0002](docs/adr/0002-role-separation-via-subagents.md)）。
 
-なお、この選択には `my-claude-code` 側のインフラ費用がある。同リポジトリには
-現時点で `.claude/agents/` が存在せず、`install.sh` の配布対象は
-`CUSTOM_SKILLS` の8スキルのみで、エージェントの配布経路がない。
+### インフラ費用は解消済み（役割エージェントの分は未着手）
+
+ADR 0002 は「`my-claude-code` に `.claude/agents/` が存在せず、`install.sh` の
+配布対象は `CUSTOM_SKILLS` の8スキルのみで、エージェントの配布経路がない」ことを
+本決定の費用として記録していた。**この費用は支払われた。** `my-claude-code` は
+その後 `.claude/agents/` を持ち、配布経路を用意している
+（同リポジトリの ADR 0004）。名前指定の `MANAGED_AGENTS` 方式で、
+`~/.claude/agents/` にある利用者自身のサブエージェントを壊さずに配布する。
+
+したがって PO 役・Developers 役サブエージェントを追加する際、
+新しい成果物カテゴリを作る作業はもう必要ない。定義を書いて
+`MANAGED_AGENTS` に名前を足すだけである。両者はまだ書かれていないため、
+Sprint 1 の作業項目としては残る。
 
 ### 前提の確認：`scrum-master` は個人利用を自動ルーティングしない
 
@@ -178,7 +188,55 @@ requests (weekly planning, daily check-ins, solo retrospectives)」）。
 「Claude が検査役として自動で立ち上がる」ことを前提にしてはならない。
 Sprint 1 でこの入口の形を決める。
 
+**この制約は変わっていない。** `my-claude-code` はデータ側の入口だけを用意した
+（次節）。ルーティング表には Apple 系の記述を一切足していないため、
+「今スプリントどう？」と書いて `scrum-master` が自動で立ち上がることはない。
+検査役を呼ぶのは依然として利用者の明示的な操作である。
+
 ---
+
+## 4-bis. データ側の入口は `my-claude-code` に実装済み
+
+§1 が要求する経路——Reminders を読み、`body` の機械可読ブロックを解釈し、
+`flow_metrics.py` に無改造で食わせる——は `my-claude-code` 側に実装された。
+本リポジトリで作り直す必要はない。
+
+| 成果物 | 担当 |
+| --- | --- |
+| `apple-reminders` スキル | AppleScript 辞書の公開範囲、TCC 権限、`--- scrum ---` ブロックの書式。`list_reminders.js`・`write_reminder.js`・`scrum_block.py` を同梱 |
+| `apple-notes` スキル | Notes の HTML 本文モデル、macOS 限定であること、リンク規約。`list_notes.js`・`write_note.js` を同梱 |
+| `apple-reminders-operator` / `apple-notes-operator` サブエージェント | 上記スキルを `skills:` で読み込み、生の JSON／HTML を会話に入れずに結論だけ返す。`tools` から `Edit`・`Write` を外してあるため、リポジトリのファイルを変更できない |
+
+§1 の設計との対応：
+
+- **`started_at` の自前記録**：`scrum_block.py` が `--- scrum ---` ブロックを
+  読み書きする。人が Reminders アプリで本文を壊した場合は、クラッシュではなく
+  problem として報告される。閉じフェンスを失った本文への書き込みは拒否する
+  ——どこまでがブロックでどこからが利用者の散文か判別できないため。
+- **着手漏れ検出（ADR 0001 の必須要件）**：`scrum_block.py unstarted` が
+  「未完了かつ `started:` なし」を一覧する。`csv` は該当項目を落とすと同時に
+  stderr で件数を警告する。黙って母数から消えることはない。
+- **`flow_metrics.py` を無改造で使う**：`csv` の出力列は
+  `item_id,started_at,completed_at` で、実データが素通しで通る。
+- **Reminders の削除はできない**：`write_reminder.js` に削除経路が存在しない。
+  Cycle Time の唯一の記録を失う操作であり、Apple Event は
+  destructive-command フックからは見えないため、削除は人がアプリ上で行う。
+
+`scrum-master` スキル側にも、記録源が外部アプリにあるときは
+両オペレーターに委譲する旨と、**委譲するのはデータアクセスだけで判断は
+委譲しない**という境界が明記されている。
+
+### 検証状態（正直に）
+
+- `scrum_block.py` は **44 件の単体テストで検証済み**（`tests/run-scrum-block.sh`）。
+  実 Reminders データを模した入力から `flow_metrics.py` まで通ることを含む。
+- 成果物間の契約（エージェントがスキルを preload するか、`Edit`/`Write` を
+  持たないか、インストーラーが配布するか）は `tests/run-apple-operators.sh` の
+  65 件で検証済み。
+- **JXA スクリプト（`.js` 4本）は一度も実行されていない。** 記録した環境が
+  Linux コンテナで macOS が無いため。§7 の未検証事項はそのまま残る。
+  最初の macOS 実行で、辞書のプロパティ名、`completion date` の埋まり方、
+  Notes の `body` の扱い、TCC ダイアログの挙動を確認する必要がある。
 
 ## 5. 段階的な進め方
 
@@ -186,14 +244,22 @@ Sprint 1 でこの入口の形を決める。
 
 ### Sprint 1 — 薄い縦切り（1スプリント回すのに必要な最小限）
 
-- Reminders を Sprint Backlog の記録源にする読み出し経路（`osascript`）
-- `body` メタデータブロックの読み書きと、**着手漏れ検出**
-  （未完了かつ `started:` なしの一覧）
-- `flow_metrics.py` に無改造で食わせる変換
-- Notes に Sprint Goal / Definition of Done / レトロ記録
+機構は §4-bis で実装済み。残るのは **macOS 上での検証と、人間側の運用**である。
+
+- ~~Reminders を Sprint Backlog の記録源にする読み出し経路（`osascript`）~~
+  → 実装済み（`list_reminders.js`）。**macOS 未検証**
+- ~~`body` メタデータブロックの読み書きと、着手漏れ検出~~
+  → 実装済み・単体テスト済み（`scrum_block.py`）
+- ~~`flow_metrics.py` に無改造で食わせる変換~~
+  → 実装済み・単体テスト済み（`scrum_block.py csv`）
+- ~~Notes に Sprint Goal / Definition of Done / レトロ記録~~
+  → 書き込み経路は実装済み（`write_note.js`）。**macOS 未検証**、中身は運用
+- **最初の macOS 実行で JXA 4本を検証する**（§7 の未検証事項を潰す）——
+  これが Sprint 1 の最初の作業項目になる
 - **決定権の明文化**（Notes 上の1枚）— どの判断を PO の帽子で下すか、
   いつ切り替えるか。役割分離の効果の大半はここで出る
-- PO 役・Developers 役サブエージェントの初版（非対称なブリーフ）
+- PO 役・Developers 役サブエージェントの初版（非対称なブリーフ）——
+  配布経路はもう存在するので、定義を書いて `MANAGED_AGENTS` に足すだけ
 - **実在の利用者との接点を1回スケジュール**
 
 ### Sprint 2 — 判断ポイント
@@ -255,3 +321,6 @@ Sprint 1 終了時点で確認する。
 - [ADR 0001](docs/adr/0001-reminders-as-system-of-record.md) — 記録源とデータモデル
 - [ADR 0002](docs/adr/0002-role-separation-via-subagents.md) — 役割分離の機構
 - [ADR 0003](docs/adr/0003-applescript-only-automation.md) — 自動化経路と依存方針
+- `my-claude-code` の ADR 0004 — Apple 操作をスキル＋サブエージェントの対で提供し、
+  サブエージェントを名前指定でユーザースコープへ配布する決定。ADR 0002 が
+  「別途 ADR が必要になる」と予告した配布機構の決定に対応する
