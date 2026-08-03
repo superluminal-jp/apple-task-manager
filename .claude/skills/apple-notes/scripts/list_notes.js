@@ -93,17 +93,33 @@ function byId(app, opts) {
   } catch (error) {
     fail('no note with id: ' + opts.id);
   }
+  const folderName = folderNameForId(app, opts.id);
 
   const item = {
     id: normalize(note.id()),
     name: normalize(note.name()),
     creationDate: normalize(note.creationDate()),
     modificationDate: normalize(note.modificationDate()),
-    folder: normalize(note.container.name()),
+    folder: normalize(folderName),
   };
   if (opts.withBody) item.body = normalize(note.body());
   if (opts.plaintext) item.plaintext = toPlainText(item.body);
   return item;
+}
+
+// Notes documents a note's `container`, but JXA fails to resolve it for a
+// valid by-id specifier. Folder membership is still available as collections
+// of opaque note ids, and does not require reading unrelated titles or bodies.
+function folderNameForId(app, noteId) {
+  const folders = app.folders();
+  let match = null;
+  for (let i = 0; i < folders.length; i++) {
+    if (folders[i].notes.id().indexOf(noteId) === -1) continue;
+    if (match !== null) fail('note belongs to multiple folders: ' + noteId);
+    match = normalize(folders[i].name());
+  }
+  if (match === null) fail('could not resolve folder for note: ' + noteId);
+  return match;
 }
 
 // The dictionary's own `plaintext` property is not consistently documented

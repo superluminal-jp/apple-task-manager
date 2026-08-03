@@ -32,8 +32,8 @@ function run(argv) {
   const app = Application('Notes');
 
   try {
-    const note = opts.id ? append(app, opts) : create(app, opts);
-    return JSON.stringify(describe(note), null, 2);
+    const result = opts.id ? append(app, opts) : create(app, opts);
+    return JSON.stringify(result, null, 2);
   } catch (error) {
     return fail(error.message);
   }
@@ -69,7 +69,7 @@ function create(app, opts) {
   const body = '<h1>' + escapeHtml(opts.title) + '</h1>' + (opts.html || '');
   const note = app.Note({ name: opts.title, body: body });
   folders[0].notes.push(note);
-  return note;
+  return describe(note, opts.folder);
 }
 
 function append(app, opts) {
@@ -80,15 +80,31 @@ function append(app, opts) {
   } catch (error) {
     fail('no note with id: ' + opts.id);
   }
+  // JXA cannot resolve a note's documented `container` property. Resolve the
+  // folder before mutating so a membership failure cannot turn a completed
+  // append into an error that the caller might retry.
+  const folderName = folderNameForId(app, opts.id);
   note.body = note.body() + opts.appendHtml;
-  return note;
+  return describe(note, folderName);
 }
 
-function describe(note) {
+function folderNameForId(app, noteId) {
+  const folders = app.folders();
+  let match = null;
+  for (let i = 0; i < folders.length; i++) {
+    if (folders[i].notes.id().indexOf(noteId) === -1) continue;
+    if (match !== null) fail('note belongs to multiple folders: ' + noteId);
+    match = normalize(folders[i].name());
+  }
+  if (match === null) fail('could not resolve folder for note: ' + noteId);
+  return match;
+}
+
+function describe(note, folderName) {
   return {
     id: normalize(note.id()),
     name: normalize(note.name()),
-    folder: normalize(note.container.name()),
+    folder: normalize(folderName),
     creationDate: normalize(note.creationDate()),
     modificationDate: normalize(note.modificationDate()),
   };

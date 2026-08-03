@@ -1,6 +1,6 @@
 ---
 name: apple-reminders
-description: Read and write Apple Reminders from macOS through the bundled EventKit CLI (remind-cli) — list a Reminders list as JSON, create, update or complete a reminder, resolve one by identifier, and read or write the machine-readable scrum block inside a reminder body. Use when a request needs reminder or task data out of Reminders.app, when items must be added or completed there, or when a Sprint Backlog kept in Reminders has to become flow-metric input.
+description: Read and write Apple Reminders from macOS through the bundled EventKit CLI (remind-cli) — ensure or list a Reminders list as JSON, create, update or complete a reminder, resolve one by identifier, and read or write the machine-readable scrum block inside a reminder body. Use when a request needs reminder or task data out of Reminders.app, when a stable list must be prepared, when items must be added or completed there, or when a Sprint Backlog kept in Reminders has to become flow-metric input.
 when_to_use: Any request touching Apple Reminders or Reminders.app on macOS — "what's on my Sprint Backlog", "add a reminder", "mark it done", "which items did I forget to start", "turn my reminders into cycle time data". Also load it before writing any EventKit, AppleScript, or JXA against Reminders, so the property surface, the build step, and the permission model are known first.
 ---
 
@@ -108,6 +108,7 @@ backend produced the JSON.
 | Command | Does |
 |---|---|
 | `lists` | Every reminder list, by name |
+| `ensure-list --name <name>` | Create or reuse one exact-name list in the default reminder source |
 | `list <name> [--open-only]` | One list as JSON |
 | `get <identifier>` | One reminder, by either identifier |
 | `create --list … --name …` | Create one |
@@ -118,11 +119,22 @@ backend produced the JSON.
 CLI="$(bash "${CLAUDE_SKILL_DIR}/scripts/build.sh")"
 
 "$CLI" lists
+"$CLI" ensure-list --name "Product Backlog"
 "$CLI" list "Sprint Backlog" --open-only
 "$CLI" get "<identifier>"
 "$CLI" create --list "Sprint Backlog" --name "Ship the login form" --due 2026-08-08
 "$CLI" complete "<identifier>"
 ```
+
+`ensure-list` trims boundary whitespace and requires a non-empty name. It uses
+exact, case-sensitive matching across reminder-capable EventKit calendars. One
+match is reused with `created: false`; no match creates one reminder calendar
+in the same source as the user's configured default reminder list and returns
+`created: true`; multiple matches fail before writing. The JSON result contains
+`id`, `name`, `source`, and `created`. If no default reminder list/source is
+configured, the command stops instead of guessing an account. There is no
+source-selection, rename, bulk-create, or list-removal command, and each call
+can create at most one list.
 
 There is no delete command, and `update` never falls back to creating. Both are
 structural, not advisory. Deleting a reminder destroys the only record of its
@@ -211,6 +223,9 @@ grant, or the Claude Code Bash permission.
 ## Sources
 
 - `EKEventStore.requestFullAccessToReminders` and the macOS 14 full/write-only split — [Apple Developer Documentation](https://developer.apple.com/documentation/eventkit/ekeventstore/requestfullaccesstoreminders(completion:))
+- Creating a reminder-capable calendar — [`EKCalendar.init(for:eventStore:)`](https://developer.apple.com/documentation/eventkit/ekcalendar/init(for:eventstore:))
+- Selecting the user's configured destination — [`defaultCalendarForNewReminders()`](https://developer.apple.com/documentation/eventkit/ekeventstore/defaultcalendarfornewreminders()) and [`EKCalendar.source`](https://developer.apple.com/documentation/eventkit/ekcalendar/source)
+- Persisting a calendar immediately — [`saveCalendar(_:commit:)`](https://developer.apple.com/documentation/eventkit/ekeventstore/savecalendar(_:commit:))
 - `calendarItemIdentifier` — [Apple Developer Documentation](https://developer.apple.com/documentation/eventkit/ekcalendaritem/calendaritemidentifier)
 - `calendarItemExternalIdentifier`, the server-provided identifier — [Apple Developer Documentation](https://developer.apple.com/documentation/eventkit/ekcalendaritem/calendaritemexternalidentifier)
 - `calendarItemIdentifier` not persisting across calendar changes — [Programming iOS, ch. 32](https://www.apeth.com/iOSBook/ch32.html)

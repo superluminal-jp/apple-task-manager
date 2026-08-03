@@ -122,6 +122,40 @@ grep -q 'requestFullAccessToReminders' \
   "$SKILLS/apple-reminders/scripts/main.swift" 2>/dev/null && c=1 || c=0
 check "main.swift requests full (not write-only) Reminders access" "$c"
 
+REMINDERS_SWIFT="$SKILLS/apple-reminders/scripts/main.swift"
+
+grep -q 'case "ensure-list"' "$REMINDERS_SWIFT" 2>/dev/null && c=1 || c=0
+check "remind-cli exposes ensure-list" "$c"
+
+grep -q 'trimmingCharacters(in: .whitespacesAndNewlines)' \
+  "$REMINDERS_SWIFT" 2>/dev/null &&
+  grep -Eq 'must be non-empty|cannot be empty' "$REMINDERS_SWIFT" 2>/dev/null && c=1 || c=0
+check "ensure-list trims and rejects an empty list name" "$c"
+
+grep -q 'matches.count' "$REMINDERS_SWIFT" 2>/dev/null &&
+  grep -Eq 'ambiguous|matches .* lists' "$REMINDERS_SWIFT" 2>/dev/null && c=1 || c=0
+check "ensure-list reuses one exact match and rejects ambiguity" "$c"
+
+grep -q 'EKCalendar(for: .reminder, eventStore: store)' \
+  "$REMINDERS_SWIFT" 2>/dev/null && c=1 || c=0
+check "ensure-list creates the official EventKit reminder calendar type" "$c"
+
+grep -q 'defaultCalendarForNewReminders()?.source' \
+  "$REMINDERS_SWIFT" 2>/dev/null && c=1 || c=0
+check "ensure-list uses the configured default reminder source" "$c"
+
+grep -q 'saveCalendar(calendar, commit: true)' \
+  "$REMINDERS_SWIFT" 2>/dev/null && c=1 || c=0
+check "ensure-list commits one calendar immediately" "$c"
+
+grep -q 'struct ReminderListJSON' "$REMINDERS_SWIFT" 2>/dev/null &&
+  grep -q 'let created: Bool' "$REMINDERS_SWIFT" 2>/dev/null && c=1 || c=0
+check "ensure-list emits a typed result with the created flag" "$c"
+
+grep -vE '^\s*//' "$REMINDERS_SWIFT" 2>/dev/null |
+  grep -Eq 'removeCalendar\s*\(' && c=0 || c=1
+check "main.swift contains no reminder-list deletion path" "$c"
+
 # No package manifest, no lockfile: the build is one compiler call.
 ls "$SKILLS/apple-reminders/scripts/Package.swift" \
   "$SKILLS/apple-reminders/scripts/"*.lock >/dev/null 2>&1 && c=0 || c=1
@@ -142,6 +176,63 @@ for script in list_notes.js write_note.js; do
   [ -f "$SKILLS/apple-notes/scripts/$script" ] && c=1 || c=0
   check "apple-notes ships $script" "$c"
 done
+
+NOTES_ENSURE="$SKILLS/apple-notes/scripts/ensure_folder.js"
+[ -f "$NOTES_ENSURE" ] && c=1 || c=0
+check "apple-notes ships ensure_folder.js" "$c"
+
+grep -q 'defaultAccount' "$NOTES_ENSURE" 2>/dev/null && c=1 || c=0
+check "ensure_folder.js scopes creation to the Notes default account" "$c"
+
+grep -q '\.trim()' "$NOTES_ENSURE" 2>/dev/null &&
+  grep -Eq 'empty|non-empty|required' "$NOTES_ENSURE" 2>/dev/null && c=1 || c=0
+check "ensure_folder.js trims and rejects an empty folder name" "$c"
+
+grep -q 'matches.length === 1' "$NOTES_ENSURE" 2>/dev/null &&
+  grep -q 'matches.length > 1' "$NOTES_ENSURE" 2>/dev/null && c=1 || c=0
+check "ensure_folder.js reuses one exact match and rejects ambiguity" "$c"
+
+grep -q 'app.Folder' "$NOTES_ENSURE" 2>/dev/null &&
+  grep -Eq 'folders\.push|folders\.unshift' "$NOTES_ENSURE" 2>/dev/null && c=1 || c=0
+check "ensure_folder.js creates one folder through the Notes folder element" "$c"
+
+grep -q 'created' "$NOTES_ENSURE" 2>/dev/null &&
+  grep -q 'JSON.stringify' "$NOTES_ENSURE" 2>/dev/null && c=1 || c=0
+check "ensure_folder.js reports idempotence as machine-readable JSON" "$c"
+
+grep -vE '^\s*//' "$NOTES_ENSURE" 2>/dev/null |
+  grep -Eq '\.delete\s*\(|\bdelete\s*\(|\bremove\s*\(' && c=0 || c=1
+check "ensure_folder.js contains no folder deletion path" "$c"
+
+# --- Reusable Scrum workspace templates -----------------------------------
+
+SCRUM_TEMPLATES="$REPO_ROOT/scrum/templates"
+for template in product-goal definition-of-done sprint-planning daily-scrum \
+  sprint-review sprint-retrospective impediment-log decision-rights; do
+  FILE="$SCRUM_TEMPLATES/$template.txt"
+  [ -f "$FILE" ] && c=1 || c=0
+  check "Scrum workspace ships $template template" "$c"
+
+  grep -q '［記入］' "$FILE" 2>/dev/null && c=1 || c=0
+  check "$template template uses placeholders instead of invented facts" "$c"
+done
+
+for template in product-goal definition-of-done sprint-planning daily-scrum \
+  sprint-review sprint-retrospective; do
+  grep -q '分類: Scrum定義' "$SCRUM_TEMPLATES/$template.txt" 2>/dev/null && c=1 || c=0
+  check "$template identifies its Scrum-defined basis" "$c"
+done
+
+for template in impediment-log decision-rights; do
+  grep -q '分類: 補助プラクティス' "$SCRUM_TEMPLATES/$template.txt" 2>/dev/null &&
+    grep -q '必須' "$SCRUM_TEMPLATES/$template.txt" 2>/dev/null && c=1 || c=0
+  check "$template is clearly supplemental rather than mandatory Scrum" "$c"
+done
+
+grep -q 'Product Backlog' "$REPO_ROOT/README.md" 2>/dev/null &&
+  grep -q 'Sprint Backlog' "$REPO_ROOT/README.md" 2>/dev/null &&
+  grep -q 'scrum/templates' "$REPO_ROOT/README.md" 2>/dev/null && c=1 || c=0
+check "README documents the prepared Scrum workspace topology" "$c"
 
 # The parsing layer is Python precisely so it can be tested off macOS.
 python3 -c "
@@ -193,6 +284,25 @@ check "write_note.js only appends, never replaces a body" "$c"
 # A note body is HTML: unescaped user text would swallow the rest of the note.
 grep -q 'escapeHtml' "$SKILLS/apple-notes/scripts/write_note.js" 2>/dev/null && c=1 || c=0
 check "write_note.js escapes text before it enters the HTML body" "$c"
+
+# Notes exposes a `container` property in its dictionary, but JXA cannot resolve
+# it for an otherwise valid note specifier (`Can't get object`). A write has
+# already happened by the time result formatting reaches that property, so using
+# it turns success into a false failure and invites a duplicate retry.
+for script in list_notes.js write_note.js; do
+  code_only "$SKILLS/apple-notes/scripts/$script" |
+    grep -Eq 'note\.container' && c=0 || c=1
+  check "$script does not resolve a note folder through note.container" "$c"
+
+  grep -q 'folderNameForId' "$SKILLS/apple-notes/scripts/$script" 2>/dev/null && c=1 || c=0
+  check "$script can resolve folder membership from a note id" "$c"
+done
+
+grep -q 'notes\.id()' "$SKILLS/apple-notes/scripts/list_notes.js" 2>/dev/null && c=1 || c=0
+check "list_notes.js matches note ids against folder membership" "$c"
+
+grep -q 'notes\.id()' "$SKILLS/apple-notes/scripts/write_note.js" 2>/dev/null && c=1 || c=0
+check "write_note.js matches appended note ids against folder membership" "$c"
 
 # --- The two operator subagents ---------------------------------------------
 

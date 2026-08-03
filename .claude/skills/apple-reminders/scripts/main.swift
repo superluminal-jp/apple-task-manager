@@ -16,6 +16,7 @@
 //
 // Commands:
 //   remind-cli lists
+//   remind-cli ensure-list --name "Product Backlog"
 //   remind-cli list "Sprint Backlog" [--open-only]
 //   remind-cli get <identifier>
 //   remind-cli create --list "Sprint Backlog" --name "..." [--body ...] [--due ISO8601]
@@ -51,6 +52,13 @@ struct ReminderJSON: Encodable {
     let priority: Int
     let list: String
     let hasRecurrenceRules: Bool
+}
+
+struct ReminderListJSON: Encodable {
+    let id: String
+    let name: String
+    let source: String
+    let created: Bool
 }
 
 // MARK: - Store access
@@ -218,6 +226,13 @@ struct Args {
         guard let value = flags[key] else { fail("--\(key) is required") }
         return value
     }
+
+    func rejectUnknownFlags(allowed: Set<String>) {
+        let unknown = Set(flags.keys).subtracting(allowed)
+        guard unknown.isEmpty else {
+            fail("unknown option: --\(unknown.sorted()[0])")
+        }
+    }
 }
 
 /// ISO 8601 in, so a caller never has to guess this machine's locale format.
@@ -252,7 +267,7 @@ func save(_ reminder: EKReminder, in store: EKEventStore) {
 
 let argv = Array(CommandLine.arguments.dropFirst())
 guard let command = argv.first else {
-    fail("usage: remind-cli <lists|list|get|create|update|complete> [...]")
+    fail("usage: remind-cli <lists|ensure-list|list|get|create|update|complete> [...]")
 }
 let args = Args(Array(argv.dropFirst()))
 
@@ -260,6 +275,47 @@ switch command {
 case "lists":
     let store = authorizedStore()
     emit(store.calendars(for: .reminder).map(\.title).sorted())
+
+case "ensure-list":
+    args.rejectUnknownFlags(allowed: ["name"])
+    guard args.positional.isEmpty else {
+        fail("usage: remind-cli ensure-list --name <list name>")
+    }
+    let name = args.require("name").trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !name.isEmpty else { fail("--name must be non-empty") }
+
+    let store = authorizedStore()
+    let matches = store.calendars(for: .reminder).filter { $0.title == name }
+    switch matches.count {
+    case 1:
+        let calendar = matches[0]
+        emit(ReminderListJSON(
+            id: calendar.calendarIdentifier,
+            name: calendar.title,
+            source: calendar.source?.title ?? "",
+            created: false
+        ))
+    case 2...:
+        fail("list name is ambiguous: \(name) matches \(matches.count) lists")
+    default:
+        guard let source = store.defaultCalendarForNewReminders()?.source else {
+            fail("no default Reminders list/source is configured")
+        }
+        let calendar = EKCalendar(for: .reminder, eventStore: store)
+        calendar.title = name
+        calendar.source = source
+        do {
+            try store.saveCalendar(calendar, commit: true)
+        } catch {
+            fail("could not save list: \(error.localizedDescription)")
+        }
+        emit(ReminderListJSON(
+            id: calendar.calendarIdentifier,
+            name: calendar.title,
+            source: source.title,
+            created: true
+        ))
+    }
 
 case "list":
     guard let name = args.positional.first else { fail("usage: remind-cli list <list name>") }

@@ -4,9 +4,10 @@ Apple Reminders と Apple Notes を記録源に、`scrum-master` スキルを検
 **1人のプロダクト開発に経験主義（透明性・検査・適応）を適用する**ための仕組み。
 必要なものはすべてこのリポジトリにある。
 
-データ側の経路は `.claude/` に実装済み（§4-bis）。**ただしネイティブコードは
-一度も macOS 上で実行されていない**（§7）。運用面——決定権の明文化、
-役割別サブエージェント、実利用者との接点——は未着手で、Sprint 1 の作業である。
+データ側の経路は `.claude/` に実装済み（§4-bis）で、**macOS上のビルド・
+基本操作・Scrumワークスペース作成まで実機検証済み**（§7）。運用面——実際の
+決定権の記入、役割別サブエージェント、実利用者との接点——は未着手で、
+Sprint 1 の作業である。
 
 ---
 
@@ -253,6 +254,38 @@ Sprint 1 でこの入口の形を決める。
 着手記録のない項目の件数を必ず添えること。`scrum-master` スキル自体は
 Apple のアプリを一切知らない。依存は一方向である。
 
+### Scrumワークスペースの準備
+
+Appleアプリ側の標準構成は次のとおり。コンテナ作成は再実行しても同名の既存
+コンテナを再利用し、曖昧な重複があれば停止する。
+
+| アプリ | コンテナ | 用途 |
+| --- | --- | --- |
+| Notes | `Scrum` フォルダ | Goal、Definition of Done、イベント記録、補助ログ |
+| Reminders | `Product Backlog` リスト | Product Goalに向けた創発的で順序付けられた作業 |
+| Reminders | `Sprint Backlog` リスト | Sprint Goal、選択した項目、実行可能な計画の作業側 |
+
+```bash
+N="$PWD/.claude/skills/apple-notes/scripts"
+R="$PWD/.claude/skills/apple-reminders/scripts"
+CLI="$(bash "$R/build.sh")"
+
+osascript -l JavaScript "$N/ensure_folder.js" --name "Scrum"
+"$CLI" ensure-list --name "Product Backlog"
+"$CLI" ensure-list --name "Sprint Backlog"
+```
+
+Notes用の再利用可能な本文は [`scrum/templates/`](scrum/templates/) に置く。
+Product Goal、Definition of Done、Sprint Planning、Daily Scrum、Sprint Review、
+Sprint Retrospectiveの6つはScrum Guideで定義されたコミットメント／イベントに
+基づく。障害記録と決定権記録は有用な**補助プラクティス**であり、Scrumが必須と
+する作成物ではない。テンプレートはすべて未記入欄で、Product Goalや作業、担当、
+日付を自動生成しない。
+
+各ノートは既存の `write_note.js` を1回ずつ呼んで作成する。一括作成や同名ノートの
+上書きは行わず、先に `Scrum` フォルダを確認する。削除はNotes／Remindersの画面で
+人が行う。
+
 ### リポジトリの境界
 
 **本リポジトリは自己完結している。** クローンすれば動き、`my-claude-code` の
@@ -286,14 +319,17 @@ Apple のアプリを一切知らない。依存は一方向である。
 - 成果物間の契約（エージェントがスキルを preload するか、`Edit`/`Write` を
   持たないか、`build.sh` が `-sectcreate` を含むか、削除経路が無いか、
   `CLAUDE.md` が委譲と境界と vendoring の注意を明記しているか）は
-  `tests/run-apple-operators.sh` の 74 件で検証済み。`scrum_block.py` の CSV 列と
+  `tests/run-apple-operators.sh` の 120 件で検証済み。`scrum_block.py` の CSV 列と
   `flow_metrics.py` の入力は、**両方が本リポジトリにあるため実体同士を
   突き合わせる**（リテラルを信じない）。
-- **`remind-cli` はコンパイルすらされていない。** EventKit は Darwin 専用で、
-  記録した環境（Linux コンテナ）には `swiftc` が無い。Linux 上での検証は
-  原理的に不可能である。
-- **Notes の JXA スクリプト（`.js` 2本）も一度も実行されていない。**
-  同じ理由。§7 の未検証事項はそのまま残る。
+- **`remind-cli` は macOS でビルド・実行済み。** リスト取得、作成、更新、完了を
+  実データで確認し、EventKit が `completionDate` を設定することも確認した。
+  iCloud 同期を跨いだ `externalId` の安定性は未検証である。
+- **Notes の JXA スクリプト（`.js` 3本）は macOS で実行済み。** フォルダ作成・一覧、
+  作成、追記、ID 直接読み取り、無効 ID の拒否を確認した。初回検証では、操作は
+  成功しているのに JXA が `note.container` を解決できず結果返却だけが失敗する
+  問題を発見した。現在はノート ID とフォルダ所属 ID の照合で解決し、同じ実機
+  シナリオが成功する。直接 `container` 参照を戻さない契約も120件に含めた。
 
 ## 5. 段階的な進め方
 
@@ -301,23 +337,20 @@ Apple のアプリを一切知らない。依存は一方向である。
 
 ### Sprint 1 — 薄い縦切り（1スプリント回すのに必要な最小限）
 
-機構は §4-bis で実装済み。残るのは **macOS 上での検証と、人間側の運用**である。
+機構は §4-bis で実装済み。macOS 上の基本経路も検証済みで、残るのは
+**同期を跨ぐ識別子の検証と、人間側の運用**である。
 
 - ~~Reminders を Sprint Backlog の記録源にする読み出し経路~~
-  → 実装済み（EventKit の `remind-cli`）。**ビルド・実行とも未検証**
+  → 実装済み（EventKit の `remind-cli`）。**ビルド・基本操作を実機検証済み**
 - ~~`body` メタデータブロックの読み書きと、着手漏れ検出~~
   → 実装済み・単体テスト済み（`scrum_block.py`）
 - ~~`flow_metrics.py` に無改造で食わせる変換~~
   → 実装済み・単体テスト済み（`scrum_block.py csv`）
 - ~~Notes に Sprint Goal / Definition of Done / レトロ記録~~
-  → 書き込み経路は実装済み（`write_note.js`）。**macOS 未検証**、中身は運用
-- **最初の macOS 実行で通す**（§7 の未検証事項を潰す）。順序が決まっている：
-  1. `build.sh` が通るか（Xcode Command Line Tools）
-  2. 初回実行で**リマインダー**の許可ダイアログが出るか——出なければ
-     `Info.plist` の埋め込みが効いていないので、ビルドの問題であって
-     利用者の拒否ではない
-  3. `completionDate` が実際に埋まるか、`externalId` が同期を跨いで安定か
-  4. Notes 側の Automation 許可と、`body` が HTML であることの取り扱い
+  → 書き込み経路は実装済み（`write_note.js`）。**作成・追記・ID 読み取りを
+  macOS で検証済み**、記録内容の設計は運用として残る
+- **iCloud 同期を跨ぐ `externalId` の安定性を確認する。** 基本操作と
+  `completionDate` は確認済みだが、同期後の識別子は時間を置いた検証が要る。
 - **決定権の明文化**（Notes 上の1枚）— どの判断を PO の帽子で下すか、
   いつ切り替えるか。役割分離の効果の大半はここで出る
 - PO 役・Developers 役サブエージェントの初版（非対称なブリーフ）——
@@ -347,27 +380,17 @@ Sprint 1 終了時点で確認する。
 
 ---
 
-## 7. 未検証事項（実装時に確認する）
+## 7. 残る未検証事項
 
-正直に記録する。以下は本設計を書いた環境（Linux コンテナ、macOS なし）では
-検証できなかった。
+正直に記録する。基本操作は macOS で検証したが、以下はまだ確認していない。
 
-- **`remind-cli` はコンパイルされていない。** EventKit は Darwin 専用で、
-  この環境に `swiftc` が無い。API の形は Apple の公式リファレンスで確認したが、
-  ビルドが通ることは未確認。
-- EventKit のプロパティの実挙動。特に Reminders の `completionDate` が確実に
-  埋まるか、`calendarItemExternalIdentifier` が iCloud 同期を跨いで安定か。
-- **`Info.plist` のセクション埋め込みが実際に TCC に効くか。** これが効かないと
-  許可ダイアログが出ず、利用者側から回復できない。ビルド直後に最も先に
-  確認すべき項目。
-- Notes の読み書きの実挙動（`body` が HTML であることの取り扱い、
-  チェックリストの可否）。`plaintext` プロパティの有無は資料が一致せず未確認
-  のため、実装ではタグ除去を自前で行っている。
-- **権限が2カテゴリに分かれたこと**の実挙動。Reminders（EventKit）と
-  オートメーション（Notes）は別々に承認が要り、ヘッドレス実行では
-  どちらも詰まる。
-- **本設計に含まれるネイティブコードは一切この環境で実行検証されていない**
-  （Linux コンテナ、macOS なし）。検証済みなのは Python 層のみ。
+- `calendarItemExternalIdentifier` が iCloud 同期やアカウント間移動を跨いで
+  安定すること。単一端末上の作成・更新・完了では確認できない。
+- Notes の HTML チェックリストなど、構造化された複雑な本文の実表示。
+  通常テキストの escaping、追記、`--plaintext` は実機確認済みである。
+- 権限を一度拒否した状態、またはヘッドレス実行からの回復手順。Reminders と
+  Notes の両アクセスが別カテゴリで動作することは確認したが、拒否経路は
+  利用者のプライバシー設定を変更するためテストしていない。
 
 ---
 

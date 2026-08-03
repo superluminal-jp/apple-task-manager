@@ -1,6 +1,6 @@
 ---
 name: apple-notes
-description: Read and write Apple Notes from macOS through the bundled osascript (JXA) scripts — list a folder as JSON, fetch or resolve one note by id, create a note, and append to an existing one. Use when a request needs content out of Notes.app, when prose has to be recorded there (a goal, a decision, a retrospective, a log entry), or when a note must be linked to a reminder.
+description: Read and write Apple Notes from macOS through the bundled osascript (JXA) scripts — ensure a folder, list a folder as JSON, fetch or resolve one note by id, create a note, and append to an existing one. Use when a request needs content out of Notes.app, when a stable folder must be prepared, when prose has to be recorded there (a goal, a decision, a retrospective, a log entry), or when a note must be linked to a reminder.
 when_to_use: Any request touching Apple Notes or Notes.app on macOS — "what does my Sprint Goal note say", "write this up in Notes", "append today's decision", "find the retro note". Also load it before writing any AppleScript or JXA against Notes, so the HTML body model and the macOS-only constraint are known first.
 ---
 
@@ -70,6 +70,7 @@ a dedicated folder to a search over everything.
 
 | Script | Does |
 |---|---|
+| `scripts/ensure_folder.js` | Create or reuse one exact-name folder in the default account |
 | `scripts/list_notes.js` | A folder (or one id, or `--folders`) as JSON |
 | `scripts/write_note.js` | Create a note, or append to one by id |
 
@@ -81,6 +82,9 @@ osascript -l JavaScript "$S/list_notes.js" --folders
 osascript -l JavaScript "$S/list_notes.js" "Scrum"
 osascript -l JavaScript "$S/list_notes.js" --id "<id>" --plaintext
 
+# Ensure a stable destination (safe to retry)
+osascript -l JavaScript "$S/ensure_folder.js" --name "Scrum"
+
 # Create -- first line becomes the title
 osascript -l JavaScript "$S/write_note.js" --folder "Scrum" \
   --title "Sprint 7 Goal" --text "Cut checkout drop-off on mobile."
@@ -89,6 +93,14 @@ osascript -l JavaScript "$S/write_note.js" --folder "Scrum" \
 echo "Retro action: shrink the WIP limit to 2" \
   | osascript -l JavaScript "$S/write_note.js" --id "<id>" --append-stdin
 ```
+
+`ensure_folder.js` trims the boundary whitespace and requires a non-empty name.
+It searches direct child folders of Notes' configured default account using an
+exact, case-sensitive name. One match is reused with `created: false`; no match
+creates one folder with `created: true`; multiple matches fail before writing.
+The JSON result also contains the folder `id`, `name`, and default `account`.
+It intentionally has no account-selection, nesting, rename, move, bulk-create,
+or delete operation. Run it once per folder so each mutation remains observable.
 
 `write_note.js` cannot delete and cannot replace a whole body — only append.
 Both are structural, not advisory. A note is prose the user wrote; a bad
@@ -134,3 +146,6 @@ error and which of the two permissions above is the likely cause.
 - "Add Link" documented targets (Safari, Books, Podcasts — no Reminders) — [Add links in Notes on Mac](https://support.apple.com/guide/notes/apde615d29c2/mac)
 - Automation permission and the `-10827`-class errors — [Apple-CLI](https://lib.rs/crates/apple-cli)
 - Viewing a scripting dictionary — [View an app's scripting dictionary in Script Editor](https://support.apple.com/guide/script-editor/view-an-apps-scripting-dictionary-scpedt1126/mac)
+- Folder creation contract — the installed Notes scripting dictionary exposes
+  the application's `default account`, account `folder` elements, and folder
+  `name`/`id`; inspect it in Script Editor using Apple's procedure above.
