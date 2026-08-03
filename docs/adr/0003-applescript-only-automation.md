@@ -1,10 +1,18 @@
 ---
-status: Proposed
+status: Superseded by 0004-per-app-automation
 date: 2026-08-01
 deciders: repository maintainer
+superseded_by: 0004-per-app-optimal-automation.md
 ---
 
 # 0003. 自動化は macOS 同梱の `osascript`（AppleScript / JXA）のみで行う
+
+> **本 ADR は [ADR 0004](0004-per-app-optimal-automation.md) に supersede された
+> （2026-08-03）。** 本決定は「機構は1つであるべき」という要請から出発して
+> いたが、メンテナがその要請を取り下げ、アプリごとに最適な経路を選ぶことを
+> 明示したため、Reminders は EventKit に移った。**Notes に関する記述は
+> 0004 でもそのまま有効**である（framework が存在しないため選択肢が無い）。
+> 記録として原文は改変せず残す。
 
 ## Context and problem statement
 
