@@ -8,9 +8,9 @@
 #   - .claude/agents/apple-{notes,reminders}-operator.md — workers that preload
 #     those skills and whose tool allowlist makes "does not modify repository
 #     files" a property of the environment rather than an instruction.
-#   - the wiring: CLAUDE.md tells the scrum-master skill (a reference consumed
-#     from my-claude-code, never modified here) to delegate data access to
-#     them, and to keep the judgement.
+#   - the wiring: CLAUDE.md tells the scrum-master skill — vendored here from
+#     my-claude-code, which is never modified for this project — to delegate
+#     data access to them, and to keep the judgement.
 #
 # Deterministic: inspects repository files only. No network, no `claude` CLI,
 # and no macOS -- nothing here executes osascript.
@@ -22,10 +22,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKILLS="$REPO_ROOT/.claude/skills"
 AGENTS="$REPO_ROOT/.claude/agents"
 PROJECT_MEMORY="$REPO_ROOT/CLAUDE.md"
-# flow_metrics.py belongs to the scrum-master skill in my-claude-code. This
-# repository consumes it; it never vendors a copy. Wherever the user installed
-# it, that is the copy the pipeline actually runs.
-FLOW_METRICS="$HOME/.claude/skills/scrum-master/scripts/flow_metrics.py"
+# The scrum-master skill is vendored here (ADR 0005), so flow_metrics.py is in
+# the repository rather than wherever the user happened to install my-claude-code.
+FLOW_METRICS="$SKILLS/scrum-master/scripts/flow_metrics.py"
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -33,7 +32,6 @@ NC='\033[0m'
 
 PASS=0
 FAIL=0
-SKIPPED=0
 FAIL_NAMES=""
 
 check() {
@@ -155,22 +153,12 @@ sys.exit(0 if m.parse_block('--- scrum ---\nsprint: 7\n---')[0] == {'sprint': '7
 check "scrum_block.py imports and parses a block" "$c"
 
 # ADR 0001's whole premise: flow_metrics.py runs over Reminders data unforked.
-# The literal is asserted here because it is this repository's side of a
-# cross-repo contract -- flow_metrics.py lives in my-claude-code and is not
-# vendored, so this file is where the expectation has to be written down.
+# Both sides of that contract are now in this repository, so compare them
+# directly rather than asserting a literal against an absent file.
 CSV_HEADER=$(echo '[]' | python3 "$SKILLS/apple-reminders/scripts/scrum_block.py" csv 2>/dev/null)
-[ "$CSV_HEADER" = "item_id,started_at,completed_at" ] && c=1 || c=0
-check "scrum_block.py csv emits the three columns flow_metrics.py reads" "$c"
-
-# ...and when the skill is actually installed, check the real thing rather
-# than trusting the literal above. A skipped check is reported, never passed.
-if [ -f "$FLOW_METRICS" ]; then
-  grep -q 'item_id,started_at,completed_at' "$FLOW_METRICS" && c=1 || c=0
-  check "the installed flow_metrics.py still reads those columns" "$c"
-else
-  SKIPPED=$((SKIPPED + 1))
-  printf "SKIP %s\n" "installed flow_metrics.py not found at $FLOW_METRICS (run my-claude-code's install.sh)"
-fi
+FLOW_HEADER=$(grep -o 'item_id,started_at,completed_at' "$FLOW_METRICS" 2>/dev/null | head -1)
+[ -n "$FLOW_HEADER" ] && [ "$CSV_HEADER" = "$FLOW_HEADER" ] && c=1 || c=0
+check "scrum_block.py csv header matches what flow_metrics.py reads" "$c"
 
 # ADR 0001 makes detecting items with no recorded start a required capability.
 python3 "$SKILLS/apple-reminders/scripts/scrum_block.py" unstarted --help >/dev/null 2>&1 && c=1 || c=0
@@ -266,9 +254,19 @@ done
 [ -f "$REPO_ROOT/install.sh" ] && c=0 || c=1
 check "no installer is needed (artifacts are project-scoped)" "$c"
 
-# A vendored copy would fork silently from the skill it is meant to consume.
-[ -e "$SKILLS/scrum-master" ] && c=0 || c=1
-check "the scrum-master skill is consumed, not vendored" "$c"
+# The scrum-master skill is vendored so this repository runs without depending
+# on my-claude-code having been installed. Provenance is recorded in ADR 0005;
+# no sync machinery exists, by decision.
+[ -f "$SKILLS/scrum-master/SKILL.md" ] && c=1 || c=0
+check "the scrum-master skill is vendored here" "$c"
+
+[ -f "$FLOW_METRICS" ] && c=1 || c=0
+check "flow_metrics.py ships with the vendored skill" "$c"
+
+# Editing the vendored copy is how a snapshot silently forks from a live
+# upstream. CLAUDE.md is always loaded, so that is where the warning has to be.
+grep -q 'vendor' "$PROJECT_MEMORY" 2>/dev/null && c=1 || c=0
+check "CLAUDE.md flags scrum-master as a vendored snapshot" "$c"
 
 # The zero-external-dependency constraint survived the move to EventKit.
 ls "$REPO_ROOT/package.json" "$REPO_ROOT/requirements.txt" \
@@ -307,7 +305,6 @@ grep -qi 'delete' "$PROJECT_MEMORY" 2>/dev/null && c=1 || c=0
 check "CLAUDE.md states deletion stays a human action" "$c"
 
 echo
-[ "$SKIPPED" -gt 0 ] && printf "%d check(s) skipped.\n" "$SKIPPED"
 if [ "$FAIL" -eq 0 ]; then
   printf "${GREEN}All %d checks passed.${NC}\n" "$PASS"
   exit 0

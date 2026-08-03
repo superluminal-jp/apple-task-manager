@@ -263,12 +263,9 @@ class CsvCommandTests(unittest.TestCase):
             ],
             "csv",
         )
-        # flow_metrics.py belongs to my-claude-code's scrum-master skill and is
-        # deliberately not vendored here (ADR 0005). Check the installed copy
-        # when it exists; skip -- never silently pass -- when it does not.
-        flow = Path.home() / ".claude" / "skills" / "scrum-master" / "scripts" / "flow_metrics.py"
-        if not flow.is_file():
-            self.skipTest(f"scrum-master skill not installed at {flow}")
+        # The scrum-master skill is vendored here (ADR 0005), so this runs the
+        # real script rather than skipping when my-claude-code is not installed.
+        flow = REPO_ROOT / ".claude" / "skills" / "scrum-master" / "scripts" / "flow_metrics.py"
         csv_path = Path(self.enterContext(__import__("tempfile").TemporaryDirectory()))
         target = csv_path / "tickets.csv"
         target.write_text(out)

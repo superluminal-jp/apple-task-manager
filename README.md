@@ -1,8 +1,8 @@
 # apple-task-manager — 個人用スクラム運用システム（設計案）
 
-Apple Reminders と Apple Notes を記録源に、`my-claude-code` の `scrum-master`
-スキルを検査役として、**1人のプロダクト開発に経験主義（透明性・検査・適応）を
-適用する**ための仕組み。
+Apple Reminders と Apple Notes を記録源に、`scrum-master` スキルを検査役として、
+**1人のプロダクト開発に経験主義（透明性・検査・適応）を適用する**ための仕組み。
+必要なものはすべてこのリポジトリにある。
 
 データ側の経路は `.claude/` に実装済み（§4-bis）。**ただしネイティブコードは
 一度も macOS 上で実行されていない**（§7）。運用面——決定権の明文化、
@@ -255,15 +255,25 @@ Apple のアプリを一切知らない。依存は一方向である。
 
 ### リポジトリの境界
 
+**本リポジトリは自己完結している。** クローンすれば動き、`my-claude-code` の
+インストールを前提としない。
+
 | リポジトリ | 役割 |
 | --- | --- |
-| **apple-task-manager**（ここ） | 実装のすべて。スキル、サブエージェント、スクリプト、テスト、配線 |
-| **my-claude-code** | `scrum-master` スキルの**参照元**。本プロジェクトのために変更しない |
+| **apple-task-manager**（ここ） | 実装のすべて。Apple 操作のスキル、サブエージェント、スクリプト、テスト、配線、および vendoring した `scrum-master` |
+| **my-claude-code** | `scrum-master` の**取り込み元**。本プロジェクトのために変更しない |
 
-`flow_metrics.py` は vendoring せず、ユーザースコープに導入済みの
-`~/.claude/skills/scrum-master/scripts/flow_metrics.py` を使う。コピーを持てば
-参照するはずのものから黙って乖離するためで、これが「参照専用」の意味である
-——**利用はするが複製はしない。**
+`scrum-master` スキルは `.claude/skills/scrum-master/` に vendoring されている
+（SKILL.md、`references/` 8本、`scripts/flow_metrics.py`、および単体テスト）。
+**上流は生きているが、同期の仕組みは持たない**——出所を記録することと、
+リンクを維持することは別である。したがって：
+
+- **ここでは編集しない。** Scrum の作法そのものを変えたくなったら、上流で
+  直してから取り込み直す。
+- 本プロジェクト固有の取り決めは、vendoring したスキルではなく
+  [`CLAUDE.md`](CLAUDE.md) に書く。
+- 取り込み元のコミットは [ADR 0005](docs/adr/0005-project-scoped-apple-artifacts.md)
+  に記録してある。乖離を疑ったらそこと差分を取る。
 
 ### 検証状態（正直に）
 
@@ -271,12 +281,14 @@ Apple のアプリを一切知らない。依存は一方向である。
   実 Reminders データを模した入力から `flow_metrics.py` まで通ることを含む。
   **バックエンドが AppleScript から EventKit に移った際、このファイルは
   1行も変わらず全テストが通った**——層の分離が実際に機能した証拠である。
+- vendoring した `flow_metrics.py` は **17 件の単体テストで検証済み**
+  （`tests/run-flow-metrics.sh`）。取り込んだコードを未検証のまま置かない。
 - 成果物間の契約（エージェントがスキルを preload するか、`Edit`/`Write` を
   持たないか、`build.sh` が `-sectcreate` を含むか、削除経路が無いか、
-  `CLAUDE.md` が委譲と境界を明記しているか、`scrum-master` を vendoring して
-  いないか）は `tests/run-apple-operators.sh` の 72 件で検証済み。
-  `flow_metrics.py` の実体照合は、未導入の環境では skip として報告される
-  ——pass にはしない。
+  `CLAUDE.md` が委譲と境界と vendoring の注意を明記しているか）は
+  `tests/run-apple-operators.sh` の 74 件で検証済み。`scrum_block.py` の CSV 列と
+  `flow_metrics.py` の入力は、**両方が本リポジトリにあるため実体同士を
+  突き合わせる**（リテラルを信じない）。
 - **`remind-cli` はコンパイルすらされていない。** EventKit は Darwin 専用で、
   記録した環境（Linux コンテナ）には `swiftc` が無い。Linux 上での検証は
   原理的に不可能である。
@@ -361,9 +373,9 @@ Sprint 1 終了時点で確認する。
 
 ## 参照
 
-- Scrum Guide 2020（`my-claude-code` の
-  `.claude/skills/scrum-master/references/sources.md` の `[SG20]`）
-- `scrum-master` スキル本体 — `my-claude-code/.claude/skills/scrum-master/`
+- Scrum Guide 2020（`.claude/skills/scrum-master/references/sources.md` の `[SG20]`）
+- `scrum-master` スキル本体 — `.claude/skills/scrum-master/`
+  （`my-claude-code` の `main` `2559a50` から vendoring。ここでは編集しない）
 - [`requestFullAccessToReminders`](https://developer.apple.com/documentation/eventkit/ekeventstore/requestfullaccesstoreminders(completion:))
   — EventKit の権限 API（macOS 14 でフル／書き込み専用に分離）
 - [`calendarItemExternalIdentifier`](https://developer.apple.com/documentation/eventkit/ekcalendaritem/calendaritemexternalidentifier)
@@ -390,6 +402,6 @@ Sprint 1 終了時点で確認する。
 - [ADR 0004](docs/adr/0004-per-app-optimal-automation.md) — アプリごとに最適な
   自動化経路を選ぶ（Reminders は EventKit、Notes は AppleScript）
 - [ADR 0005](docs/adr/0005-project-scoped-apple-artifacts.md) — 成果物を本リポジトリに
-  プロジェクトスコープで置き、`my-claude-code` を `scrum-master` の参照専用とする。
-  ADR 0002 が「別途 ADR が必要になる」と予告した配布機構の論点に対応する
+  プロジェクトスコープで置き、`scrum-master` は vendoring する。ADR 0002 が
+  「別途 ADR が必要になる」と予告した配布機構の論点に対応する
   （結論：配布機構は要らない）

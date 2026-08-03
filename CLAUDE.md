@@ -9,25 +9,36 @@
 
 ## リポジトリの境界
 
-| リポジトリ | 役割 |
-| --- | --- |
-| **apple-task-manager**（ここ） | 実装。スキル、サブエージェント、スクリプト、テスト |
-| **my-claude-code** | `scrum-master` スキルの**参照元**。ユーザースコープに導入済みのものを使う |
+**本リポジトリは自己完結している。** クローンすれば動き、`my-claude-code` の
+インストールを前提としない。`scrum-master` スキルはここに vendoring されている
+（[ADR 0005](docs/adr/0005-project-scoped-apple-artifacts.md)）。
 
-依存は一方向である。ここが `scrum-master` を利用し、`scrum-master` は
-Apple のアプリを一切知らない。**この目的のために my-claude-code を変更しない。**
-汎用の Scrum スキルに特定のタスクアプリの配線を持たせないことが、そもそも
-正しい形である（[ADR 0005](docs/adr/0005-project-scoped-apple-artifacts.md)）。
+**この目的のために my-claude-code を変更しない。** 汎用の Scrum スキルに
+特定のタスクアプリの配線を持たせないことが、そもそも正しい形である。
 
-`flow_metrics.py` は vendoring せず、導入済みの実体を使う：
-`~/.claude/skills/scrum-master/scripts/flow_metrics.py`
+### vendoring した `scrum-master` の扱い
+
+`.claude/skills/scrum-master/` は `my-claude-code` からの**スナップショット**で
+あり、上流は生きている（同リポジトリで保守が続く）。同期の仕組みは持たない
+——出所を記録することと、リンクを維持することは別である。
+
+- **ここで編集しない。** 編集すれば、上流と黙って乖離する。Scrum の作法そのものを
+  変えたくなったら、上流（`my-claude-code`）で直してから取り込み直す。
+- 本リポジトリ固有の取り決め——両オペレーターへの委譲、着手記録の扱い——は
+  vendoring したスキルではなく**このファイル**に書く。下の節がそれである。
+- 取り込み元のコミットは ADR 0005 に記録されている。乖離を疑ったらそこと
+  差分を取る。
+
+`flow_metrics.py` も同じ扱いで、`.claude/skills/scrum-master/scripts/` にある。
+単体テスト（`tests/test_flow_metrics.py`）も一緒に取り込んであるため、
+取り込んだコードが検証されないまま置かれることはない。
 
 ## 検査役として振る舞うとき
 
 Scrum の相談——スプリントの検査、Sprint Goal の吟味、レトロ、障害除去——では
 `scrum-master` スキルを読み込む。**自動では立ち上がらない。** 同スキルの
-ルーティングは個人利用を対象にしておらず、ここでもそれを変えていない。
-呼ぶのは利用者の明示的な操作である（README §4）。
+ルーティング定義は個人利用を対象にしておらず、vendoring したコピーでも
+それを書き換えていない。呼ぶのは利用者の明示的な操作である（README §4）。
 
 ### データアクセスは委譲する
 
@@ -78,6 +89,7 @@ append のみ）、これは指示ではなく構造である。インライン 
 
 ```sh
 bash tests/run-scrum-block.sh       # scrum_block.py の単体テスト
+bash tests/run-flow-metrics.sh      # flow_metrics.py の単体テスト（vendoring 分）
 bash tests/run-apple-operators.sh   # 成果物間の契約
 ```
 
