@@ -1,0 +1,14 @@
+# Build artifact of .claude/skills/apple-reminders (EventKit CLI, macOS only).
+# Built on demand by that skill's scripts/build.sh; a compiled binary has no
+# business in a diff.
+.claude/skills/apple-reminders/scripts/remind-cli
+
+# Python
+__pycache__/
+*.py[cod]
+
+# macOS
+.DS_Store
+
+# Local, non-shared permission state
+.claude/settings.local.json
