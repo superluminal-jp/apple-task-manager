@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Linked into the binary's __TEXT,__info_plist section by build.sh.
+
+  This is not cosmetic. TCC reads the usage description from the running
+  binary; a bare Mach-O executable with no Info.plist section has nowhere for
+  TCC to read it from, so the permission dialog never appears and every call
+  fails as "access not granted" with no way for the user to grant it.
+
+  NSRemindersFullAccessUsageDescription is the macOS 14+ key. The older
+  NSRemindersUsageDescription is kept for earlier systems, which read that one.
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>local.my-claude-code.remind-cli</string>
+    <key>CFBundleName</key>
+    <string>remind-cli</string>
+    <key>NSRemindersFullAccessUsageDescription</key>
+    <string>Claude Code reads and updates your reminders to answer questions about them and to record Scrum data you asked it to track.</string>
+    <key>NSRemindersUsageDescription</key>
+    <string>Claude Code reads and updates your reminders to answer questions about them and to record Scrum data you asked it to track.</string>
+</dict>
+</plist>
