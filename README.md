@@ -5,40 +5,13 @@ Apple Reminders と Apple Notes を記録源に、`scrum-master` スキルを検
 必要なものはすべてこのリポジトリにある。
 
 データ側の経路は `.claude/` に実装済み（§4-bis）で、**macOS上のビルド・
-基本操作・Scrumワークスペース作成まで実機検証済み**（§7）。役割別の
-`product-owner-perspective` / `developers-perspective` も実装済み。残る運用面は
+基本操作・Scrumワークスペース作成まで実機検証済み**（§7）。残る運用面は
 実際の決定権の記入、iCloud同期後の識別子検証、実利用者との接点である。
 
----
-
-## 0. これは Scrum ではない（最初に読むこと）
-
-この仕組みを「個人Scrum」と呼ぶことはできるが、**Scrum ではない**。
-曖昧にすると、機能を作るほど「Scrumをやっているつもり」が強化されるため、
-最初に明示する。
-
-**事実**：Scrum Guide はアカウンタビリティを人に割り当てる。
-「プロダクトオーナーは1人であり、委員会ではない」[SG20, p.5]、
-「プロダクトオーナーだけがスプリントを中止する権限を持つ」[SG20, p.8]。
-そして「スクラムの一部だけを導入することも可能だが、それはスクラムとは言えない」
-[SG20, p.13]。
-
-**推論**（Guide の逐語ではなく、上記から導く含意）：アカウンタビリティとは
-結果を引き受けることである。スキルやサブエージェントはテキストを生成するが、
-何も引き受けない。したがってエージェントを増やしても生まれるのは**視点**であり、
-**アカウンタビリティ**ではない。
-
-### 単独運用で構造的に失われるもの
-
-| 失われるもの | この仕組みで埋まるか |
-| --- | --- |
-| 外部からの実証（実利用者のフィードバック） | **埋まらない**。スプリント毎に実在の利用者との接点を予定として入れることでのみ緩和する |
-| 利害が実際に異なる独立した視点 | **部分的に埋まる**。§4 の役割分離が担う |
-| 3つのアカウンタビリティの分離 | 埋まらない。1人が全結果を引き受ける構造は変わらない |
-
-したがって本システムの目的は「Scrum の再現」ではなく、
-**Scrum の透明性・検査・適応を単独作業に適用し、欠けた外部検査役を
-Claude が代替すること**である。
+**Product Owner と Developers は実在する。** 判断・決定はユーザーが会話に
+持ち込む——ユーザー自身であれ、ユーザーが代弁する実在の関係者であれ。
+**Claude に期待する役割は Scrum Master のみ**であり、他のアカウンタビリティを
+演じたり代行したりしない（詳細は §4）。
 
 ---
 
@@ -161,48 +134,39 @@ Cycle Time の母数から落ちるため、**着手漏れの検出（未完了�
 
 ---
 
-## 4. 役割分離：サブエージェントで行い、スキルは増やさない
+## 4. 役割の扱い：Product Owner と Developers は実在する
 
-PO 役と Developers 役を**同一の会話**で Claude に演じさせると、独立した利害を
-持たないため対話は即座に収束する（＝偽の合意）。役割分離の価値は
-「別の指示書を持つこと」ではなく、**同じコンテキストを共有しないこと**にある。
+Scrum Guide はアカウンタビリティを人に割り当てる。「プロダクトオーナーは
+1人であり、委員会ではない」[SG20, p.5]、「プロダクトオーナーだけがスプリントを
+中止する権限を持つ」[SG20, p.8]。アカウンタビリティとは結果を引き受けることで
+あり、AI はテキストを生成するが何も引き受けない。
 
-したがって分離は**別コンテキストのサブエージェントに非対称な情報と目的を
-与える**形で実装する。`my-claude-code` に `product-owner` /
-`developers` スキルを追加する案は採らない
-（[ADR 0002](docs/adr/0002-role-separation-via-subagents.md)）。
+**したがって Claude に期待する役割は Scrum Master だけである。** Product
+Owner・Developers の判断や決定は、実在する人物——ユーザー自身、または
+ユーザーが代弁する実際の関係者——が会話に持ち込む。Claude はそれを
+Scrum Guide の規範（透明性・検査・適応）に照らして検査するが、PO や
+Developers の立場を演じたり、判断を代行したりしない。
 
-### インフラ費用は発生しなかった
+正しい PO / Developers の振る舞い（アカウンタビリティの範囲、コミットメント、
+Scrum Master との関わり方）を確認したいときは、vendoring した
+`scrum-master` スキルの規範層を読む。
 
-ADR 0002 は「`my-claude-code` に `.claude/agents/` が存在せず、`install.sh` の
-配布対象は `CUSTOM_SKILLS` の8スキルのみで、エージェントの配布経路がない」ことを
-本決定の費用として記録し、配布機構を新設する作業が要ると見ていた。
+| 参照先 | 内容 |
+| --- | --- |
+| [`scrum-framework.md`](.claude/skills/scrum-master/references/scrum-framework.md) の「Scrum Team のアカウンタビリティ」 | Product Owner・Scrum Master・Developers それぞれの定義（Scrum Guide 逐語） |
+| [`scrum-master-role.md`](.claude/skills/scrum-master/references/scrum-master-role.md) の「Product Owner への奉仕」 | Scrum Master が PO をどう支援するか |
 
-**その作業は要らなかった。** サブエージェントは本リポジトリの
-`.claude/agents/` にプロジェクトスコープで置く。Claude Code は
-プロジェクトの `.claude/` を自動的に読むため、配布機構も
-インストーラーも存在しない（[ADR 0005](docs/adr/0005-project-scoped-apple-artifacts.md)）。
+これらは人間が読むための参照であり、AI が演じるための台本ではない。
 
-一度は `my-claude-code` 側に置いて `install.sh` に名前指定の配布経路を
-新設する案を実装したが、**依存の向きが逆だった**——汎用の Scrum スキルが
-特定のタスクアプリの配線を抱え、参照元のリポジトリが参照する側の都合で
-書き換わっていく。ADR 0005 がその経緯と却下理由を記録している。
+### 過去の設計との違い（サブエージェントによる役割視点は廃止した）
 
-PO 役・Developers 役は、`.claude/agents/` の
-`product-owner-perspective.md` / `developers-perspective.md` として実装した。
-どちらも `Read` / `Grep` / `Glob` だけを持ち、Appleアプリを直接読み書きしない。
-前者にはProduct Goal・利用者/成果の証拠・候補項目、後者には候補Sprint Goal・
-Definition of Done・容量実績・技術/品質制約を渡す。相手のレポートを含めた場合は
-「独立した視点」として扱わず、別コンテキストでやり直す。
-
-実行順は次のとおり。
-
-1. `scrum-master` スキルを明示的に呼ぶ。
-2. 必要な事実だけをAppleオペレーターから取得する。
-3. `product-owner-perspective` と `developers-perspective` を**別コンテキスト**で
-   起動し、両方が完了するまで相手のレポートを渡さない。
-4. 両レポートの事実・推論・仮定・対立・証拠不足を比較し、次の検査を決める。
-5. **最終判断は人間が行う。** エージェントは視点であり、アカウンタビリティではない。
+以前は PO 役・Developers 役を `.claude/agents/product-owner-perspective.md` /
+`developers-perspective.md` として実装し、別コンテキストのサブエージェントに
+非対称なブリーフを与えて「独立した視点」を生成させていた。PO と Developers が
+実在し、判断を直接会話に持ち込める以上、AI にその代行視点を演じさせることは
+不要であり、実在のアカウンタビリティと AI の助言を混同させる紛らわしさの
+原因になっていた。そのため両サブエージェントを廃止した
+（[ADR 0002](docs/adr/0002-role-separation-via-subagents.md)、2026-08-09 改訂）。
 
 ### 前提の確認：`scrum-master` は個人利用を自動ルーティングしない
 
@@ -219,7 +183,7 @@ requests (weekly planning, daily check-ins, solo retrospectives)」）。
 同時に本設計への制約になる。**個人スクラムの相談は `scrum-master` に自動で
 ルーティングされない。** `my-claude-code` のルーティング表は変更せず、本リポジトリの
 [`CLAUDE.md`](CLAUDE.md) に上記の明示的な入口を実装した。「今スプリントどう？」
-だけで自動起動するのではなく、`scrum-master` と2つの役割視点を指定して呼ぶ。
+だけで自動起動するのではなく、`scrum-master` を明示的に指定して呼ぶ。
 
 ---
 
@@ -327,9 +291,10 @@ Sprint Retrospectiveの6つはScrum Guideで定義されたコミットメント
   `tests/run-apple-operators.sh` の 120 件で検証済み。`scrum_block.py` の CSV 列と
   `flow_metrics.py` の入力は、**両方が本リポジトリにあるため実体同士を
   突き合わせる**（リテラルを信じない）。
-- `product-owner-perspective` / `developers-perspective` のfrontmatter、読み取り専用
-  tools、非対称ブリーフ、意思決定境界、アカウンタビリティの但し書き、
-  `CLAUDE.md` の別コンテキスト配線は `tests/run-scrum-role-agents.sh` の8件で検証済み。
+- `product-owner-perspective` / `developers-perspective` は廃止した。
+  両ファイルが `.claude/agents/` に存在しないこと、README・`CLAUDE.md` が
+  これらを参照せず PO/Developers が実在する前提を明記していることは
+  `tests/run-scrum-role-agents.sh` で検証済み。
 - **`remind-cli` は macOS でビルド・実行済み。** リスト取得、作成、更新、完了を
   実データで確認し、EventKit が `completionDate` を設定することも確認した。
   iCloud 同期を跨いだ `externalId` の安定性は未検証である。
@@ -341,7 +306,7 @@ Sprint Retrospectiveの6つはScrum Guideで定義されたコミットメント
 
 ## 5. 段階的な進め方
 
-役割分離とデータ基盤を同時に立ち上げるが、順序に意味を持たせる。
+決定権の明文化とデータ基盤を同時に立ち上げるが、順序に意味を持たせる。
 
 ### Sprint 1 — 薄い縦切り（1スプリント回すのに必要な最小限）
 
@@ -360,9 +325,8 @@ Sprint Retrospectiveの6つはScrum Guideで定義されたコミットメント
 - **iCloud 同期を跨ぐ `externalId` の安定性を確認する。** 基本操作と
   `completionDate` は確認済みだが、同期後の識別子は時間を置いた検証が要る。
 - **決定権の明文化**（Notes 上の1枚）— どの判断を PO の帽子で下すか、
-  いつ切り替えるか。役割分離の効果の大半はここで出る
-- ~~PO 役・Developers 役サブエージェントの初版（非対称なブリーフ）~~
-  → `product-owner-perspective` / `developers-perspective` と別コンテキスト配線を実装済み
+  どの判断を Developers の帽子で下すか、いつ切り替えるか。実在するPO・
+  Developersのアカウンタビリティの境界を明文化するものであり、AIには持たせない
 - **実在の利用者との接点を1回スケジュール**
 
 ### Sprint 2 — 判断ポイント
@@ -426,7 +390,8 @@ Sprint 1 終了時点で確認する。
 ### 意思決定記録
 
 - [ADR 0001](docs/adr/0001-reminders-as-system-of-record.md) — 記録源とデータモデル
-- [ADR 0002](docs/adr/0002-role-separation-via-subagents.md) — 役割分離の機構
+- [ADR 0002](docs/adr/0002-role-separation-via-subagents.md) — 役割視点をAIに
+  演じさせず、実在するPO/Developersの判断を直接扱う（2026-08-09 改訂）
 - [ADR 0003](docs/adr/0003-applescript-only-automation.md) — 自動化経路と依存方針
   （**[ADR 0004](docs/adr/0004-per-app-optimal-automation.md) に supersede 済み**。
   Notes に関する記述は引き続き有効）

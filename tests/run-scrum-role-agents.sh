@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Scrum role perspective agent contract test runner
+# Abolished PO/Developers perspective agent contract test runner
 # Usage: bash tests/run-scrum-role-agents.sh
 #
-# This suite checks Markdown agent definitions and project routing only. It uses
+# This suite checks that the role-perspective subagents were removed and that
+# project routing reflects real PO/Developers accountability instead. It uses
 # the Python standard library, makes no model or network calls, and never reads
 # or writes Apple Notes or Reminders.
 
