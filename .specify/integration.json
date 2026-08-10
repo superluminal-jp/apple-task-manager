@@ -1,8 +1,9 @@
 {
-  "version": "0.13.0",
+  "version": "0.16.1",
   "integration_state_schema": 1,
   "installed_integrations": [
-    "codex"
+    "codex",
+    "claude"
   ],
   "integration_settings": {
     "codex": {
@@ -12,8 +13,12 @@
         "skills": true
       },
       "invoke_separator": "-"
+    },
+    "claude": {
+      "script": "sh",
+      "invoke_separator": "-"
     }
   },
-  "integration": "codex",
-  "default_integration": "codex"
+  "integration": "claude",
+  "default_integration": "claude"
 }
