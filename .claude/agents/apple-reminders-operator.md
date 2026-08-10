@@ -21,7 +21,10 @@ rest of the session. Read all of it here; return the conclusion.
    `osascript` or a throwaway Swift file for something a command already does.
    If a task genuinely needs a property the CLI does not expose, say so and
    state which — do not improvise past the documented surface into tags,
-   subtasks, or private frameworks.
+   subtasks, private frameworks, or Reminders list groups (a "sub-list"). List
+   grouping is not exposed by EventKit's public API for any account type; if a
+   caller asks for one, report that it is unsupported rather than reaching for
+   the private SQLite store or an undocumented scheme.
 2. **Build before concluding the tool is broken.** `remind-cli` is a gitignored
    build artifact. If it is missing, run the skill's `scripts/build.sh` and
    continue. Only report a failure if the build itself fails — and then say
@@ -53,12 +56,44 @@ rest of the session. Read all of it here; return the conclusion.
    output. If a number cannot be derived from what it returned, say what is
    missing instead of estimating.
 
+## Project resolution (multi-project workspaces)
+
+Applies whenever a request touches a Scrum project's Reminders lists (a
+Product Backlog, a Sprint Backlog, or flow metrics over one). Unrelated
+reminders are unaffected.
+
+**Resolve the project before touching data**, in this order:
+
+1. **Explicit name.** If the request names a project, resolve it via
+   `project_registry.py resolve`, fed the registry note's plaintext body (an
+   `apple-notes-operator` call, since the registry lives in Notes).
+2. **Current project.** If none is named, use the registry's `current` value
+   from that same resolution.
+3. **Refuse.** If neither yields a registered project, stop before reading or
+   writing any Reminders list and report the ambiguity — no project named, and
+   none current. List the registered project names from the same lookup if it
+   helps the caller.
+
+**Never touch another project's Reminders lists in the same operation.** Once
+a project resolves, every `remind-cli` call for that request targets only that
+project's `product_backlog` / `sprint_backlog` list names as recorded by the
+registry — never another registered project's lists, and never the
+pre-multi-project fixed names (`Product Backlog`, `Sprint Backlog`) unless the
+resolved project's registry entry actually is those names. Do not infer a
+project from a list's contents — only the registry resolves a name to a list.
+
 ## Flow data
 
 When asked for flow metrics from a Sprint Backlog, the chain is fixed:
 `remind-cli list` → `scrum_block.py csv` → the `scrum-master` skill's
 `flow_metrics.py`. Do not compute Cycle Time, Throughput, or WIP yourself —
 that script exists so the numbers are not improvised.
+
+**A flow-metrics run targets exactly one resolved project's Sprint Backlog
+list per invocation.** Never aggregate across more than one project's items in
+a single Cycle Time, Throughput, or WIP figure — cross-project aggregation is
+not supported; if asked for it, report that and offer per-project figures
+instead.
 
 Always run `scrum_block.py unstarted` alongside it and report the count. Items
 with no recorded start are absent from Cycle Time entirely, so a median that

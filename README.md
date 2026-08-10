@@ -5,8 +5,10 @@ Apple Reminders と Apple Notes を記録源に、`scrum-master` スキルを検
 必要なものはすべてこのリポジトリにある。
 
 データ側の経路は `.claude/` に実装済み（§4-bis）で、**macOS上のビルド・
-基本操作・Scrumワークスペース作成まで実機検証済み**（§7）。残る運用面は
-実際の決定権の記入、iCloud同期後の識別子検証、実利用者との接点である。
+基本操作・単一プロジェクトのScrumワークスペース作成、および複数プロジェクト
+機能（プロジェクト登録・分離・current切り替え・スプリントサブフォルダ）
+まで実機検証済み**（§7）。残る運用面は実際の決定権の記入、iCloud同期後の
+識別子検証、実利用者との接点である。
 
 **Product Owner と Developers は実在する。** 判断・決定はユーザーが会話に
 持ち込む——ユーザー自身であれ、ユーザーが代弁する実在の関係者であれ。
@@ -108,8 +110,11 @@ Cycle Time の母数から落ちるため、**着手漏れの検出（未完了�
   移ったため**ビルド手順が1つある**（`swiftc` を1回、`build.sh` が冪等に
   実行）。Xcode Command Line Tools が要る。Notes 側は `osascript` のみで
   ビルド不要（[ADR 0004](docs/adr/0004-per-app-optimal-automation.md)）。
-- 管理対象は**特定の1プロダクト／プロジェクト**。したがって Product Goal と
-  Sprint Goal が本来の意味で機能する。
+- 管理対象は**プロジェクト単位**（複数可）。プロジェクトごとに独立した Notes
+  フォルダ1つと Reminders リスト2本（Product Backlog／Sprint Backlog）を持ち、
+  Product Goal と Sprint Goal はそのプロジェクトの中で本来の意味で機能する
+  （§4-bis「複数プロジェクトの管理」、
+  [ADR 0006](docs/adr/0006-project-registry-as-notes-event-log.md)）。
 
 ---
 
@@ -131,6 +136,12 @@ Cycle Time の母数から落ちるため、**着手漏れの検出（未完了�
 - **Sprint Review** → 外部の利害関係者が不在。自己承認の儀式に退化する
   最大のリスクがあるため、**実在の利用者との接点をスプリント毎に1回
   予定として入れる**。自動化では代替できない。
+
+Notes 側の格納先は、プロジェクトフォルダの中で**スプリントごとにサブフォルダを
+分ける**。Sprint Goal・Sprint Review 記録・Retrospective 記録・障害記録は
+そのスプリントのサブフォルダに入る。Product Goal と Definition of Done は
+スプリントを跨ぐ標準成果物であるため、サブフォルダの外——プロジェクトフォルダ
+直下——に置き、スプリントごとに複製しない（§4-bis「複数プロジェクトの管理」）。
 
 ---
 
@@ -197,7 +208,7 @@ requests (weekly planning, daily check-ins, solo retrospectives)」）。
 | 成果物 | 担当 |
 | --- | --- |
 | `apple-reminders` スキル | EventKit の公開範囲、ビルド手順、Reminders 権限、`--- scrum ---` ブロックの書式。`main.swift`（`remind-cli`）・`Info.plist`・`build.sh`・`scrum_block.py` を同梱 |
-| `apple-notes` スキル | Notes の HTML 本文モデル、macOS 限定であること、リンク規約。`list_notes.js`・`write_note.js` を同梱 |
+| `apple-notes` スキル | Notes の HTML 本文モデル、macOS 限定であること、リンク規約、複数プロジェクトのレジストリ規約。`list_notes.js`・`write_note.js`・`ensure_folder.js`（`--parent-id` でサブフォルダ対応）・`project_registry.py` を同梱 |
 | `apple-reminders-operator` / `apple-notes-operator` サブエージェント | 上記スキルを `skills:` で読み込み、生の JSON／HTML を会話に入れずに結論だけ返す。`tools` から `Edit`・`Write` を外してあるため、リポジトリのファイルを変更できない |
 
 §1 の設計との対応：
@@ -223,26 +234,90 @@ requests (weekly planning, daily check-ins, solo retrospectives)」）。
 着手記録のない項目の件数を必ず添えること。`scrum-master` スキル自体は
 Apple のアプリを一切知らない。依存は一方向である。
 
-### Scrumワークスペースの準備
+### 複数プロジェクトの管理
 
-Appleアプリ側の標準構成は次のとおり。コンテナ作成は再実行しても同名の既存
-コンテナを再利用し、曖昧な重複があれば停止する。
+管理対象はプロジェクト単位で、プロジェクトごとに次の三点セットを持つ
+（[spec 004](specs/004-multi-project-scrum/spec.md)、
+[ADR 0006](docs/adr/0006-project-registry-as-notes-event-log.md)）。
 
-| アプリ | コンテナ | 用途 |
-| --- | --- | --- |
-| Notes | `Scrum` フォルダ | Goal、Definition of Done、イベント記録、補助ログ |
-| Reminders | `Product Backlog` リスト | Product Goalに向けた創発的で順序付けられた作業 |
-| Reminders | `Sprint Backlog` リスト | Sprint Goal、選択した項目、実行可能な計画の作業側 |
+| アプリ | コンテナ | 命名規則（新規プロジェクト） | 用途 |
+| --- | --- | --- | --- |
+| Notes | `<プロジェクト名>` フォルダ | プロジェクト名そのまま（装飾なし） | Goal、Definition of Done、スプリントごとのサブフォルダ |
+| Reminders | `<プロジェクト名> Product Backlog` リスト | 種別語を末尾に付与 | Product Goalに向けた創発的で順序付けられた作業 |
+| Reminders | `<プロジェクト名> Sprint Backlog` リスト | 種別語を末尾に付与 | Sprint Goal、選択した項目、実行可能な計画の作業側 |
+
+どのプロジェクトが登録済みで、どれが「現在のプロジェクト」かは、Notes 内の
+**専用レジストリノート**が持つ。`write_note.js` は追記しかできないため、
+レジストリは1レコードを書き換える形ではなく、**追記専用のイベントログ**
+（`register` / `set-current` の小さなブロックを積み重ね、読むときに畳み込む）
+として実装されている。読み書きは `project_registry.py` が担う。
 
 ```bash
 N="$PWD/.claude/skills/apple-notes/scripts"
 R="$PWD/.claude/skills/apple-reminders/scripts"
 CLI="$(bash "$R/build.sh")"
 
-osascript -l JavaScript "$N/ensure_folder.js" --name "Scrum"
-"$CLI" ensure-list --name "Product Backlog"
-"$CLI" ensure-list --name "Sprint Backlog"
+# レジストリノートを一度だけ作成する（以後は --id で参照する）
+REGISTRY_ID=$(osascript -l JavaScript "$N/write_note.js" --folder "Scrum" \
+  --title "Projects" --text "プロジェクトレジストリ。手動で削除しないこと。" \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+
+# 新規プロジェクトを登録する（三点セットを作成してから登録）
+"$CLI" ensure-list --name "ProjectA Product Backlog"
+"$CLI" ensure-list --name "ProjectA Sprint Backlog"
+osascript -l JavaScript "$N/ensure_folder.js" --name "ProjectA"
+
+osascript -l JavaScript "$N/list_notes.js" --id "$REGISTRY_ID" --plaintext --field plaintext \
+  | python3 "$N/project_registry.py" register --name "ProjectA" \
+      --notes-folder "ProjectA" \
+      --product-backlog "ProjectA Product Backlog" \
+      --sprint-backlog "ProjectA Sprint Backlog" \
+  | osascript -l JavaScript "$N/write_note.js" --id "$REGISTRY_ID" --append-stdin
+
+# 登録済みプロジェクトの一覧と「現在のプロジェクト」を見る
+osascript -l JavaScript "$N/list_notes.js" --id "$REGISTRY_ID" --plaintext --field plaintext \
+  | python3 "$N/project_registry.py" resolve
+
+# 「現在のプロジェクト」を切り替える
+osascript -l JavaScript "$N/list_notes.js" --id "$REGISTRY_ID" --plaintext --field plaintext \
+  | python3 "$N/project_registry.py" set-current --name "ProjectA" \
+  | osascript -l JavaScript "$N/write_note.js" --id "$REGISTRY_ID" --append-stdin
 ```
+
+プロジェクト名を省略したリクエストは、レジストリの「現在のプロジェクト」に
+解決される。どちらも無い場合（名前指定なし・current 未設定）は、両オペレーター
+とも操作を実行せず曖昧さを報告する——推測はしない。
+
+**既存の単一運用データの移行**：現行の Notes「Scrum」フォルダと Reminders
+「Product Backlog」「Sprint Backlog」は、**リネームせずそのままの名前で**
+最初のプロジェクトとして登録できる。`ensure_folder.js` と `remind-cli` は
+どちらもリネーム操作を持たないため（意図的な設計）、命名規則は新規作成
+プロジェクトにのみ適用され、移行したプロジェクトは実際のリソース名を
+そのままレジストリに記録する。
+
+```bash
+python3 "$N/project_registry.py" register --name "Scrum" \
+  --notes-folder "Scrum" \
+  --product-backlog "Product Backlog" \
+  --sprint-backlog "Sprint Backlog" \
+  | osascript -l JavaScript "$N/write_note.js" --id "$REGISTRY_ID" --append-stdin
+```
+
+このコマンドは新しい Notes フォルダも Reminders リストも作成しない——既存の
+3つをレジストリに登録するだけである。
+
+**スプリントごとのサブフォルダ**：プロジェクトフォルダの直下に、スプリント名の
+サブフォルダを作る。Product Goal と Definition of Done はサブフォルダの外
+（プロジェクトフォルダ直下）に置く。
+
+```bash
+osascript -l JavaScript "$N/ensure_folder.js" --name "Sprint 7" --parent-id "<プロジェクトフォルダのid>"
+```
+
+このフォルダにノートを書き込むときは `write_note.js --folder-id <サブフォルダのid>`
+を使う。`--folder "Sprint 7"` のような名前指定は使わない——別プロジェクトも
+同名のサブフォルダを持ちうるため、名前だけでは一意に定まらない。`write_note.js`
+は名前指定が曖昧な場合は拒否するようになっている（黙って先着1件を選ばない）。
 
 Notes用の再利用可能な本文は [`scrum/templates/`](scrum/templates/) に置く。
 Product Goal、Definition of Done、Sprint Planning、Daily Scrum、Sprint Review、
@@ -252,8 +327,9 @@ Sprint Retrospectiveの6つはScrum Guideで定義されたコミットメント
 日付を自動生成しない。
 
 各ノートは既存の `write_note.js` を1回ずつ呼んで作成する。一括作成や同名ノートの
-上書きは行わず、先に `Scrum` フォルダを確認する。削除はNotes／Remindersの画面で
-人が行う。
+上書きは行わず、先に対象フォルダを確認する。削除はNotes／Remindersの画面で
+人が行う。プロジェクトの削除（レジストリ・フォルダ・リストいずれも）も同様に
+自動化経路を持たない。
 
 ### リポジトリの境界
 
@@ -285,6 +361,10 @@ Sprint Retrospectiveの6つはScrum Guideで定義されたコミットメント
   1行も変わらず全テストが通った**——層の分離が実際に機能した証拠である。
 - vendoring した `flow_metrics.py` は **17 件の単体テストで検証済み**
   （`tests/run-flow-metrics.sh`）。取り込んだコードを未検証のまま置かない。
+- `project_registry.py`（複数プロジェクトのレジストリを畳み込む純Python層）は
+  **27 件の単体テストで検証済み**（`tests/run-project-registry.sh`）。
+  不正な閉じフェンス、未登録プロジェクトへの `set-current`、矛盾するリソース名
+  での再登録拒否などを含む。`scrum_block.py` と同様、macOS 不要で実行できる。
 - 成果物間の契約（エージェントがスキルを preload するか、`Edit`/`Write` を
   持たないか、`build.sh` が `-sectcreate` を含むか、削除経路が無いか、
   `CLAUDE.md` が委譲と境界と vendoring の注意を明記しているか）は
@@ -363,6 +443,14 @@ Sprint 1 終了時点で確認する。
 - 権限を一度拒否した状態、またはヘッドレス実行からの回復手順。Reminders と
   Notes の両アクセスが別カテゴリで動作することは確認したが、拒否経路は
   利用者のプライバシー設定を変更するためテストしていない。
+- **複数プロジェクト機能（spec 004）は macOS 26.5.2 の実アカウントで実機検証済み**
+  （`specs/004-multi-project-scrum/quickstart.md` の「Verification Evidence」）。
+  プロジェクト登録・分離・current切り替え・`ensure_folder.js --parent-id` の
+  冪等性・Sprintサブフォルダへの書き込みを確認した。この過程で当初の設計に
+  無かった不具合を2件発見・修正している——`list_notes.js --id` の出力形状
+  （`--field plaintext` が必要）、`write_note.js --folder` の曖昧性未検出
+  （`--folder-id` を追加）。未検証なのは iCloud 同期を跨ぐシナリオと、複数
+  アカウントにまたがる構成。
 
 ---
 
@@ -401,3 +489,6 @@ Sprint 1 終了時点で確認する。
   プロジェクトスコープで置き、`scrum-master` は vendoring する。ADR 0002 が
   「別途 ADR が必要になる」と予告した配布機構の論点に対応する
   （結論：配布機構は要らない）
+- [ADR 0006](docs/adr/0006-project-registry-as-notes-event-log.md) — 複数プロジェクトの
+  レジストリを、リポジトリ設定ファイルではなく Notes ノート内の追記専用
+  イベントログとして持つ

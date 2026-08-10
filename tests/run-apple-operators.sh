@@ -414,6 +414,95 @@ check "CLAUDE.md states the inspector must be invoked explicitly" "$c"
 grep -qi 'delete' "$PROJECT_MEMORY" 2>/dev/null && c=1 || c=0
 check "CLAUDE.md states deletion stays a human action" "$c"
 
+# --- Multi-project support (spec 004, ADR 0006) -----------------------------
+
+PROJECT_REGISTRY="$SKILLS/apple-notes/scripts/project_registry.py"
+[ -f "$PROJECT_REGISTRY" ] && c=1 || c=0
+check "apple-notes ships project_registry.py" "$c"
+
+for sub in '"resolve"' '"list"' '"current"' '"register"' '"set-current"'; do
+  grep -q "add_parser($sub" "$PROJECT_REGISTRY" 2>/dev/null && c=1 || c=0
+  check "project_registry.py exposes the $sub subcommand" "$c"
+done
+
+# The registry has no rename or delete event type by design (docs/adr/0006).
+grep -vE '^\s*#' "$PROJECT_REGISTRY" 2>/dev/null |
+  grep -Eq '"rename"|"delete"|"unregister"' && c=0 || c=1
+check "project_registry.py exposes no rename/delete/unregister event" "$c"
+
+grep -q 'class RegistryError' "$PROJECT_REGISTRY" 2>/dev/null &&
+  grep -q 'unterminated' "$PROJECT_REGISTRY" 2>/dev/null && c=1 || c=0
+check "project_registry.py refuses an unterminated block rather than guessing" "$c"
+
+# --- Notes subfolder support (ensure_folder.js --parent-id, spec 004 US5) ---
+
+grep -q -- '--parent-id' "$NOTES_ENSURE" 2>/dev/null && c=1 || c=0
+check "ensure_folder.js accepts --parent-id" "$c"
+
+grep -q 'app.folders.byId' "$NOTES_ENSURE" 2>/dev/null && c=1 || c=0
+check "ensure_folder.js resolves a parent folder by id" "$c"
+
+grep -q 'ensureInParent' "$NOTES_ENSURE" 2>/dev/null &&
+  grep -q 'parent.folders()' "$NOTES_ENSURE" 2>/dev/null && c=1 || c=0
+check "ensure_folder.js scopes parent-mode matching to that folder's children" "$c"
+
+grep -q 'ambiguous under parent' "$NOTES_ENSURE" 2>/dev/null && c=1 || c=0
+check "ensure_folder.js reports parent-scoped ambiguity distinctly" "$c"
+
+# --- Project resolution wiring in both operators (spec 004, contracts/project-resolution.md) ---
+
+for app in notes reminders; do
+  AGENT="$AGENTS/apple-$app-operator.md"
+
+  grep -q '## Project resolution' "$AGENT" 2>/dev/null && c=1 || c=0
+  check "apple-$app-operator documents project resolution" "$c"
+
+  grep -qi 'Explicit name' "$AGENT" 2>/dev/null &&
+    grep -qi 'Current project' "$AGENT" 2>/dev/null &&
+    grep -qi 'Refuse' "$AGENT" 2>/dev/null && c=1 || c=0
+  check "apple-$app-operator states the resolution order (name -> current -> refuse)" "$c"
+
+  grep -qi "never touch another project" "$AGENT" 2>/dev/null && c=1 || c=0
+  check "apple-$app-operator states the cross-project isolation rule" "$c"
+done
+
+grep -qi 'exactly one resolved project' "$AGENTS/apple-reminders-operator.md" 2>/dev/null && c=1 || c=0
+check "apple-reminders-operator scopes flow metrics to one resolved project" "$c"
+
+grep -qi 'list group' "$AGENTS/apple-reminders-operator.md" 2>/dev/null && c=1 || c=0
+check "apple-reminders-operator states Reminders list grouping is unsupported" "$c"
+
+grep -qi 'list group' "$SKILLS/apple-reminders/SKILL.md" 2>/dev/null &&
+  grep -q '683611' "$SKILLS/apple-reminders/SKILL.md" 2>/dev/null && c=1 || c=0
+check "apple-reminders SKILL.md documents the EventKit list-group limitation with its source" "$c"
+
+grep -q 'project_registry.py' "$SKILLS/apple-notes/SKILL.md" 2>/dev/null && c=1 || c=0
+check "apple-notes SKILL.md documents project_registry.py" "$c"
+
+grep -qi 'Sprint subfolder' "$SKILLS/apple-notes/SKILL.md" 2>/dev/null &&
+  grep -q 'Definition of Done' "$SKILLS/apple-notes/SKILL.md" 2>/dev/null && c=1 || c=0
+check "apple-notes SKILL.md documents Sprint subfolders and the standing-artifact root rule" "$c"
+
+grep -q '複数プロジェクト' "$PROJECT_MEMORY" 2>/dev/null && c=1 || c=0
+check "CLAUDE.md documents multi-project resolution delegation" "$c"
+
+# --- write_note.js --folder-id and ambiguity refusal (found during live verification) ---
+
+NOTES_WRITE="$SKILLS/apple-notes/scripts/write_note.js"
+
+grep -q -- '--folder-id' "$NOTES_WRITE" 2>/dev/null && c=1 || c=0
+check "write_note.js accepts --folder-id" "$c"
+
+grep -q 'matches.length > 1' "$NOTES_WRITE" 2>/dev/null &&
+  grep -qi 'ambiguous' "$NOTES_WRITE" 2>/dev/null && c=1 || c=0
+check "write_note.js refuses an ambiguous --folder name match" "$c"
+
+grep -qi 'folder-id' "$SKILLS/apple-notes/SKILL.md" 2>/dev/null && c=1 || c=0
+check "apple-notes SKILL.md documents --folder-id for colliding folder names" "$c"
+
+grep -qi 'folder-id' "$AGENTS/apple-notes-operator.md" 2>/dev/null && c=1 || c=0
+check "apple-notes-operator is told to use --folder-id for Sprint subfolders" "$c"
+
 echo
 if [ "$FAIL" -eq 0 ]; then
   printf "${GREEN}All %d checks passed.${NC}\n" "$PASS"

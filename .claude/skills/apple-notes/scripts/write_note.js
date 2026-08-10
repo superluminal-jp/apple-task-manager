@@ -6,6 +6,11 @@
 //   osascript -l JavaScript write_note.js --folder "Scrum" \
 //     --title "Sprint 7 Goal" --text "Cut checkout drop-off on mobile."
 //
+//   # create into a folder resolved by id -- required once same-named folders
+//   # can exist (e.g. every project's own "Sprint 1" subfolder)
+//   osascript -l JavaScript write_note.js --folder-id "<folder id>" \
+//     --title "Sprint 1 Goal" --text "..."
+//
 //   # append (body from stdin, so it can span lines)
 //   echo "Retro action: shrink the WIP limit to 2" \
 //     | osascript -l JavaScript write_note.js --id "<id>" --append-stdin
@@ -13,13 +18,20 @@
 //   # append raw HTML when structure matters (a list, a table)
 //   osascript -l JavaScript write_note.js --id "<id>" --append-html "<ul><li>a</li></ul>"
 //
-// Two rules this script enforces structurally rather than by convention:
+// Three rules this script enforces structurally rather than by convention:
 //
 //   1. **No delete, and no whole-body replace.** A note is narrative the user
 //      wrote; the failure mode of a bad overwrite is losing prose with no undo
 //      outside Notes.app itself. Append is additive and safe to retry.
 //   2. **--id means append, never create.** An unresolvable id fails rather
 //      than creating a stray note somewhere the user will not look for it.
+//   3. **--folder matches ambiguously fail rather than picking one.** Once
+//      subfolders exist (multi-project Sprint subfolders in particular,
+//      apple-notes's `ensure_folder.js --parent-id`), two folders can share a
+//      display name across different parents. `--folder <name>` searches the
+//      whole account and refuses on more than one match; `--folder-id <id>`
+//      is unambiguous by construction and is the only safe choice once a
+//      collision is possible.
 //
 // A note body is HTML. Plain text passed to --text or --append-stdin is escaped
 // and wrapped in a <div> per line, because raw newlines do not render.
@@ -40,11 +52,12 @@ function run(argv) {
 }
 
 function parseArgs(argv) {
-  const opts = { id: null, folder: null, title: null, html: null, appendHtml: null };
+  const opts = { id: null, folder: null, folderId: null, title: null, html: null, appendHtml: null };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--id') opts.id = argv[++i];
     else if (arg === '--folder') opts.folder = argv[++i];
+    else if (arg === '--folder-id') opts.folderId = argv[++i];
     else if (arg === '--title') opts.title = argv[++i];
     else if (arg === '--text') opts.html = toHtml(argv[++i]);
     else if (arg === '--text-stdin') opts.html = toHtml(readStdin());
@@ -55,21 +68,40 @@ function parseArgs(argv) {
     else fail('unknown option: ' + arg);
   }
   if (opts.id && opts.appendHtml === null) fail('--id needs one of --append / --append-stdin / --append-html');
-  if (!opts.id && !opts.folder) fail('--folder is required when creating (--id appends)');
+  if (opts.folder && opts.folderId) fail('use --folder or --folder-id, not both');
+  if (!opts.id && !opts.folder && !opts.folderId) fail('--folder or --folder-id is required when creating (--id appends)');
   if (!opts.id && !opts.title) fail('--title is required when creating');
   return opts;
 }
 
 function create(app, opts) {
-  const folders = app.folders.whose({ name: opts.folder });
-  if (folders.length === 0) fail('no such folder: ' + opts.folder);
+  let folder, folderName;
+  if (opts.folderId) {
+    try {
+      folder = app.folders.byId(opts.folderId);
+      folderName = folder.name(); // Force the specifier to resolve now, not later.
+    } catch (error) {
+      fail('no folder with id: ' + opts.folderId);
+    }
+  } else {
+    const matches = app.folders.whose({ name: opts.folder });
+    if (matches.length === 0) fail('no such folder: ' + opts.folder);
+    if (matches.length > 1) {
+      fail(
+        'folder name is ambiguous in the account: ' + opts.folder +
+          ' -- use --folder-id (from ensure_folder.js) instead'
+      );
+    }
+    folder = matches[0];
+    folderName = opts.folder;
+  }
 
   // Notes derives the displayed title from the first line of the body, so the
   // title is prepended as an <h1> rather than only set as the `name` property.
   const body = '<h1>' + escapeHtml(opts.title) + '</h1>' + (opts.html || '');
   const note = app.Note({ name: opts.title, body: body });
-  folders[0].notes.push(note);
-  return describe(note, opts.folder);
+  folder.notes.push(note);
+  return describe(note, folderName);
 }
 
 function append(app, opts) {

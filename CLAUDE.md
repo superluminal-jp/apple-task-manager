@@ -89,6 +89,19 @@ HTML は、必要なのは結論だけなのに以後のセッション全体を
 Lead Time（作成→完了）と Cycle Time（着手→完了）は別物として扱う。
 両者の差は Product Backlog での待ち時間であり、それ自体が診断に使える。
 
+### 複数プロジェクトの解決も委譲する
+
+管理対象がプロジェクト単位（複数可）になったため、両オペレーターは
+Reminders/Notes を操作する前に**どのプロジェクトを対象にするか**を解決する
+（[spec 004](specs/004-multi-project-scrum/spec.md)、
+[ADR 0006](docs/adr/0006-project-registry-as-notes-event-log.md)、
+[`contracts/project-resolution.md`](specs/004-multi-project-scrum/contracts/project-resolution.md)）。
+解決順は「① 明示されたプロジェクト名 → ② レジストリの現在のプロジェクト
+→ ③ どちらも無ければ操作を実行せず曖昧さを報告」で固定であり、これも
+**データアクセス層の事実解決**（判断ではない）として両オペレーターに委譲する。
+一度解決したら、そのリクエストの中で他プロジェクトのフォルダ・リストには
+一切触れない。
+
 ## 破壊的操作
 
 **Reminders と Notes の削除・全文上書きは行わない。** どちらの書き込み経路にも

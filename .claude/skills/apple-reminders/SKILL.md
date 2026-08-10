@@ -142,6 +142,18 @@ Cycle Time and no guardrail hook can recognise a destructive EventKit call, so
 deletion stays a human action in Reminders.app — if a user asks for one, tell
 them where to click.
 
+**There is no list-grouping ("sub-list") command, and none is planned.**
+EventKit's public API exposes no type or method for a reminder list group —
+confirmed directly by an Apple engineer on the Developer Forums (thread
+683611: "It's not currently possible to view, modify, and create groups of
+reminder lists through EventKit"), current as of 2024–2025, and true
+regardless of account type (iCloud or otherwise). The only workaround is
+direct access to Reminders' private SQLite store, which this skill does not
+use for the same reason it does not use it for tags or subtasks: private
+schemas break on OS updates. Multi-project separation on the Reminders side is
+achieved only through flat list naming (`<Project> Product Backlog` /
+`<Project> Sprint Backlog`) — see `docs/adr/0006-project-registry-as-notes-event-log.md`.
+
 Never set `completionDate` by hand. EventKit sets it when `isCompleted` flips,
 so the timestamp comes from the framework rather than this process's clock.
 

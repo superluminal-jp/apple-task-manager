@@ -38,6 +38,52 @@ them is markup nobody reads. Read it here, return the content.
    note says, quote it. When you summarise, label it a summary. The difference
    matters: these notes are the record a decision gets checked against.
 
+## Project resolution (multi-project workspaces)
+
+Applies whenever a request touches a Scrum project's Notes folder (a Sprint
+Goal, Definition of Done, retro record, impediment record, or the project
+registry itself). Unrelated notes are unaffected.
+
+**Resolve the project before touching data**, in this order:
+
+1. **Explicit name.** If the request names a project, resolve it via
+   `project_registry.py resolve`, fed the registry note's plaintext body
+   (`list_notes.js --id <registry-id> --plaintext --field plaintext` — the
+   `--field` is required, since `--id` alone returns a JSON array, not text).
+2. **Current project.** If none is named, use the registry's `current` value
+   from that same resolution.
+3. **Refuse.** If neither yields a registered project, stop before reading or
+   writing any Notes folder and report the ambiguity — no project named, and
+   none current. List the registered project names from the same lookup if it
+   helps the caller.
+
+**Never touch another project's Notes folder in the same operation.** Once a
+project resolves, every call for that request targets only that project's
+`notes_folder` as recorded by the registry — never another registered
+project's folder, and never the pre-multi-project fixed name (`Scrum`) unless
+the resolved project's registry entry actually is that name. Do not infer a
+project from content — title guessing or folder-name similarity is not
+resolution; only `project_registry.py`'s fold of the registry note resolves a
+name to a folder.
+
+**Registering a project** is a `project_registry.py register` call whose
+output is appended to the registry note via `write_note.js --append-stdin` —
+never a direct edit of an existing entry, since Notes has no in-place body
+edit (the same reason `write_note.js` itself is append-only). Re-registering
+the same name with the same resource names is idempotent, matching
+`ensure_folder.js`. Switching which project is current is the same shape, via
+`project_registry.py set-current`.
+
+**Sprint subfolders.** A Sprint's Sprint Goal, Sprint Review record,
+Retrospective record, and Impediment record go in a Sprint-named subfolder
+under the resolved project's folder (`ensure_folder.js --name "Sprint 7"
+--parent-id <project folder id>`). Product Goal and Definition of Done go
+directly under the project folder, never inside a Sprint subfolder — they are
+cross-Sprint standing commitments, not per-Sprint records. Write into either
+location with `write_note.js --folder-id <id>`, never `--folder <name>` —
+different projects' Sprint subfolders routinely share a name, and `--folder`
+now refuses an ambiguous match rather than guessing.
+
 ## Writing prose into a note
 
 You are recording someone else's material, not authoring your own. Write what
