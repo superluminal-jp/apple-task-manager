@@ -7,8 +7,21 @@
 __pycache__/
 *.py[cod]
 
+# JavaScript test/build artifacts
+node_modules/
+dist/
+build/
+*.log
+.env*
+
 # macOS
 .DS_Store
+
+# Local editor artifacts
+*.swp
+*.tmp
+.vscode/
+.idea/
 
 # Local, non-shared permission state
 .claude/settings.local.json

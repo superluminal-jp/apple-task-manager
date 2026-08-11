@@ -114,12 +114,12 @@ function parseArgs(argv) {
     folderId: null,
     title: null,
     html: null,
+    rawText: null,
     appendHtml: null,
     blockName: null,
     replaceHtml: null,
     overwrite: false,
     overwriteText: null,
-    overwriteHtml: null,
     delete: false,
     expectHash: null,
   };
@@ -129,8 +129,8 @@ function parseArgs(argv) {
     else if (arg === '--folder') opts.folder = argv[++i];
     else if (arg === '--folder-id') opts.folderId = argv[++i];
     else if (arg === '--title') opts.title = argv[++i];
-    else if (arg === '--text') opts.html = toHtml(argv[++i]);
-    else if (arg === '--text-stdin') opts.html = toHtml(readStdin());
+    else if (arg === '--text') opts.rawText = argv[++i];
+    else if (arg === '--text-stdin') opts.rawText = readStdin();
     else if (arg === '--html') opts.html = argv[++i];
     else if (arg === '--append') opts.appendHtml = toHtml(argv[++i]);
     else if (arg === '--append-stdin') opts.appendHtml = toHtml(readStdin());
@@ -142,7 +142,6 @@ function parseArgs(argv) {
     else if (arg === '--overwrite-stdin') {
       opts.overwrite = true;
       opts.overwriteText = readStdin();
-      opts.overwriteHtml = toHtml(opts.overwriteText);
     }
     else if (arg === '--delete') opts.delete = true;
     else if (arg === '--expect-hash') opts.expectHash = argv[++i];
@@ -185,6 +184,13 @@ function parseArgs(argv) {
 }
 
 function create(app, opts) {
+  // Finish validation and conversion before constructing or pushing a Notes
+  // record. Unsupported native formats therefore cannot leave a partial note.
+  const convertedHtml = opts.rawText !== null && opts.rawText !== undefined
+    ? markdownToNotesHtml(dedupTitleLine(opts.title, opts.rawText))
+    : (opts.html || '');
+  const body = '<h1>' + escapeHtml(opts.title) + '</h1>' + convertedHtml;
+
   let folder, folderName;
   if (opts.folderId) {
     try {
@@ -207,9 +213,24 @@ function create(app, opts) {
   }
 
   // Notes derives the displayed title from the first line of the body, so the
-  // title is prepended as an <h1> rather than only set as the `name` property.
-  const body = '<h1>' + escapeHtml(opts.title) + '</h1>' + (opts.html || '');
-  const note = app.Note({ name: opts.title, body: body });
+  // title is prepended as an <h1> -- and, critically, `name` is NOT also
+  // passed to `Note()`. Setting `name` at creation time makes Notes.app
+  // unconditionally inject its own plain `<div>{name}</div>` as the note's
+  // literal first body line, in addition to whatever the body already
+  // contains -- confirmed by direct experiment (specs/006-notes-template-
+  // format-fix/research.md "Root cause, corrected"). That injection, not
+  // anything a caller passes via --text, is what produced every previously
+  // reported duplicated title: the <h1> we send is preserved as one styled
+  // line, and Notes prepends a second, plain, `name`-derived line ahead of
+  // it. Passing only `body` lets Notes derive both the display title and
+  // `note.name()` from the <h1> alone, with nothing to duplicate against.
+  //
+  // A caller can still independently repeat the title as literal text inside
+  // --text/--text-stdin (as this note's own history did) -- dedupTitleLine
+  // guards against that separately (contracts/note-body-conversion.md Rule
+  // 1), and markdownToNotesHtml renders only the allow-listed Notes formats.
+  // Raw --html content (no opts.rawText) is used as-is.
+  const note = app.Note({ body: body });
   folder.notes.push(note);
   return describe(note, folderName);
 }
@@ -287,8 +308,17 @@ function replaceBlock(app, opts) {
 // to opts.expectHash (see "Conditional overwrite and delete" in the header
 // comment). Sets both `name` and the body's displayed title to the new first
 // line, mirroring create()'s reasoning: the display title is derived from
-// the body's first line, and `name` should not be left pointing at stale text.
+// the body's first line, and `name` should not be left pointing at stale
+// text. Unlike create(), no dedupTitleLine step is needed here: overwrite()
+// never prepends a separate <h1> the way create() does, so there is no
+// second title-shaped line for a matching first line to collide with. The
+// Markdown conversion still applies, the same as create(). It is completed
+// before resolving or mutating the existing note so invalid input is atomic.
 function overwrite(app, opts) {
+  const overwriteText = opts.overwriteText || '';
+  const convertedHtml = markdownToNotesHtml(overwriteText);
+  const convertedName = firstVisibleLine(overwriteText);
+
   let note;
   try {
     note = app.notes.byId(opts.id);
@@ -306,8 +336,8 @@ function overwrite(app, opts) {
     );
   }
 
-  note.name = (opts.overwriteText || '').split('\n')[0];
-  note.body = opts.overwriteHtml || '';
+  note.name = convertedName;
+  note.body = convertedHtml;
   return describe(note, folderName);
 }
 
@@ -420,6 +450,384 @@ function describe(note, folderName) {
   };
 }
 
+// Drops a first line that exactly repeats `title` (both trimmed), so a
+// caller's --text/--text-stdin content does not duplicate the <h1> create()
+// already prepends -- see contracts/note-body-conversion.md Rule 1. Only an
+// exact match counts: a first line that merely resembles the title (e.g. a
+// title with a suffix in parentheses) is real content and must survive.
+function dedupTitleLine(title, rawText) {
+  const lines = String(rawText).split('\n');
+  const first = lines[0].trim().replace(/^#\s+/, '');
+  if (first === String(title).trim()) {
+    return lines.slice(1).join('\n');
+  }
+  return rawText;
+}
+
+const MAX_LIST_LEVEL = 8;
+const ALIGNMENTS = ['left', 'center', 'right', 'justify'];
+
+function formatError(format, reason) {
+  throw new Error('unsupported Notes format: ' + format + ' -- ' + reason);
+}
+
+function closedFenceLines(lines) {
+  const fenced = {};
+  let open = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^```/.test(lines[i])) continue;
+    if (open === -1) {
+      open = i;
+    } else {
+      for (let j = open; j <= i; j++) fenced[j] = true;
+      open = -1;
+    }
+  }
+  return fenced;
+}
+
+function parseListLine(line) {
+  if (/^\t+/.test(line) && /^(?:\t+)(?:\* |\d+\. )/.test(line)) {
+    formatError('List indentation', 'tabs are not allowed; use two spaces per level');
+  }
+  const match = /^( *)(\* |\d+\. )(.*)$/.exec(line);
+  if (!match) return null;
+  if (match[1].length % 2 !== 0) {
+    formatError('List indentation', 'use exactly two spaces per level');
+  }
+  const level = match[1].length / 2;
+  if (level > MAX_LIST_LEVEL) {
+    formatError('List nesting', 'maximum supported level is ' + MAX_LIST_LEVEL);
+  }
+  return {
+    level: level,
+    kind: match[2] === '* ' ? 'ul' : 'ol',
+    text: match[3],
+  };
+}
+
+function parseSpanAttributes(spec) {
+  const tokens = String(spec).trim().split(/ +/).filter(Boolean);
+  const attrs = {};
+  if (tokens.length === 0) formatError('attribute', 'empty formatting attribute');
+  for (let i = 0; i < tokens.length; i++) {
+    const pair = /^([a-z]+)=(.+)$/.exec(tokens[i]);
+    if (!pair) formatError('attribute', 'expected name=value');
+    if (pair[1] === 'color') {
+      if (!/^#[0-9A-Fa-f]{6}$/.test(pair[2])) {
+        formatError('color', 'use a six-digit #RRGGBB value');
+      }
+      attrs.color = pair[2].toUpperCase();
+    } else if (pair[1] === 'size') {
+      if (!/^\d+$/.test(pair[2]) || Number(pair[2]) < 1 || Number(pair[2]) > 512) {
+        formatError('size', 'use an integer from 1 through 512');
+      }
+      attrs.size = Number(pair[2]);
+    } else if (pair[1] === 'font') {
+      formatError('Font family', 'public Apple Events do not preserve font family');
+    } else {
+      formatError('attribute', 'unknown attribute: ' + pair[1]);
+    }
+  }
+  return attrs;
+}
+
+function validateNotesMarkdown(text) {
+  const lines = String(text).split('\n');
+  const fenced = closedFenceLines(lines);
+  let previousListLevel = null;
+  const listItemSeen = {};
+  const nestedListSeen = {};
+  function resetListContext() {
+    previousListLevel = null;
+    Object.keys(listItemSeen).forEach((key) => {
+      delete listItemSeen[key];
+      delete nestedListSeen[key];
+    });
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    if (fenced[i]) continue;
+    const line = lines[i];
+
+    if (/^\s*-\s+\[[ xX]\]\s+/.test(line)) {
+      formatError('Checklist', 'public Apple Events do not preserve checklist state');
+    }
+    if (/^\s*-\s+/.test(line)) {
+      formatError('Dashed List', 'public Apple Events flatten it to a bulleted list');
+    }
+    if (/^\s*>\s?/.test(line)) {
+      formatError('Block Quote', 'public Apple Events flatten it to Body');
+    }
+    if (/==[^=\n]+==/.test(line)) {
+      formatError('Highlight', 'public Apple Events discard highlighting');
+    }
+    if (/\{font=|font-family\s*:|<font\b/i.test(line)) {
+      formatError('Font family', 'public Apple Events do not preserve font family');
+    }
+
+    const alignLike = /^\{align=([^}]*)\}/.exec(line);
+    if (alignLike && ALIGNMENTS.indexOf(alignLike[1]) === -1) {
+      formatError('alignment', 'use left, center, right, or justify');
+    }
+    if (/^\{align=/.test(line) && !alignLike) {
+      formatError('alignment', 'close the alignment prefix with }');
+    }
+    if (alignLike && /^(?:\* |\d+\. )/.test(line.slice(alignLike[0].length))) {
+      formatError('alignment', 'alignment prefixes cannot be applied to list items');
+    }
+
+    const list = parseListLine(line);
+    if (list) {
+      if (previousListLevel === null && list.level !== 0) {
+        formatError('List nesting', 'a nested item needs a parent item');
+      }
+      if (previousListLevel !== null && list.level > previousListLevel + 1) {
+        formatError('List nesting', 'levels cannot be skipped');
+      }
+      if (list.level > 0) nestedListSeen[list.level - 1] = true;
+      listItemSeen[list.level] = true;
+      nestedListSeen[list.level] = false;
+      Object.keys(listItemSeen).forEach((key) => {
+        if (Number(key) > list.level) {
+          delete listItemSeen[key];
+          delete nestedListSeen[key];
+        }
+      });
+      previousListLevel = list.level;
+    } else if (line.trim() !== '') {
+      const continuation = /^( +)(.*)$/.exec(line);
+      if (continuation && continuation[1].length % 2 === 0) {
+        const parentLevel = continuation[1].length / 2 - 1;
+        if (parentLevel >= 0 && listItemSeen[parentLevel] && nestedListSeen[parentLevel]) {
+          formatError(
+            'List continuation',
+            'place item continuation lines before a nested list'
+          );
+        }
+      } else if (!/^ +/.test(line)) {
+        resetListContext();
+      }
+    } else {
+      resetListContext();
+    }
+
+    const spanPattern = /\[[^\]\n]*\]\{([^}\n]*)\}/g;
+    let spanMatch;
+    while ((spanMatch = spanPattern.exec(line)) !== null) {
+      parseSpanAttributes(spanMatch[1]);
+    }
+  }
+  return true;
+}
+
+function findClosingDelimiter(text, start, delimiter) {
+  if (delimiter === '*') {
+    for (let i = start + 1; i < text.length; i++) {
+      if (text[i] === '*' && text[i - 1] !== '*' && text[i + 1] !== '*') return i;
+    }
+    return -1;
+  }
+  let found = text.indexOf(delimiter, start + delimiter.length);
+  if (delimiter === '**' && found !== -1 && text[found + 2] === '*') found += 1;
+  return found;
+}
+
+function renderInline(text) {
+  const source = String(text);
+  let html = '';
+  let i = 0;
+  while (i < source.length) {
+    if (source.slice(i, i + 2) === '**') {
+      const close = findClosingDelimiter(source, i, '**');
+      if (close !== -1) {
+        html += '<b>' + renderInline(source.slice(i + 2, close)) + '</b>';
+        i = close + 2;
+        continue;
+      }
+    }
+    if (source[i] === '*' && source[i + 1] !== '*') {
+      const close = findClosingDelimiter(source, i, '*');
+      if (close !== -1) {
+        html += '<i>' + renderInline(source.slice(i + 1, close)) + '</i>';
+        i = close + 1;
+        continue;
+      }
+    }
+
+    const paired = [
+      { delimiter: '++', open: '<u>', close: '</u>' },
+      { delimiter: '~~', open: '<s>', close: '</s>' },
+    ];
+    let renderedPair = false;
+    for (let p = 0; p < paired.length; p++) {
+      const token = paired[p];
+      if (source.slice(i, i + 2) !== token.delimiter) continue;
+      const close = findClosingDelimiter(source, i, token.delimiter);
+      if (close === -1) continue;
+      html += token.open + renderInline(source.slice(i + 2, close)) + token.close;
+      i = close + 2;
+      renderedPair = true;
+      break;
+    }
+    if (renderedPair) continue;
+
+    if (source[i] === '[') {
+      const textEnd = source.indexOf(']', i + 1);
+      if (textEnd !== -1 && source[textEnd + 1] === '{') {
+        const attrEnd = source.indexOf('}', textEnd + 2);
+        if (attrEnd !== -1) {
+          const attrs = parseSpanAttributes(source.slice(textEnd + 2, attrEnd));
+          const styles = [];
+          if (attrs.color) styles.push('color: ' + attrs.color);
+          if (attrs.size) styles.push('font-size: ' + attrs.size + 'px');
+          html += '<span style="' + styles.join('; ') + '">' +
+            renderInline(source.slice(i + 1, textEnd)) + '</span>';
+          i = attrEnd + 1;
+          continue;
+        }
+      }
+    }
+
+    html += escapeHtml(source[i]);
+    i++;
+  }
+  return html;
+}
+
+function listSequenceToHtml(lines, start, level) {
+  let html = '';
+  let index = start;
+  while (index < lines.length) {
+    const item = parseListLine(lines[index]);
+    if (!item || item.level !== level) break;
+    const group = listGroupToHtml(lines, index, level, item.kind);
+    html += group.html;
+    index = group.index;
+  }
+  return { html: html, index: index };
+}
+
+function listGroupToHtml(lines, start, level, kind) {
+  let html = '<' + kind + '>';
+  let index = start;
+  while (index < lines.length) {
+    const item = parseListLine(lines[index]);
+    if (!item || item.level !== level || item.kind !== kind) break;
+    html += '<li>' + renderInline(item.text);
+    index++;
+    let sawNestedList = false;
+
+    while (index < lines.length) {
+      const nested = parseListLine(lines[index]);
+      if (nested && nested.level === level + 1) {
+        const sequence = listSequenceToHtml(lines, index, level + 1);
+        html += sequence.html;
+        index = sequence.index;
+        sawNestedList = true;
+        continue;
+      }
+      if (nested) break;
+
+      const continuation = /^( +)(.*)$/.exec(lines[index]);
+      if (continuation && continuation[1].length === (level + 1) * 2 && continuation[2]) {
+        if (sawNestedList) {
+          formatError(
+            'List continuation',
+            'place item continuation lines before a nested list'
+          );
+        }
+        html += '<br>' + renderInline(continuation[2]);
+        index++;
+        continue;
+      }
+      break;
+    }
+    html += '</li>';
+  }
+  html += '</' + kind + '>';
+  return { html: html, index: index };
+}
+
+function paragraphToHtml(line) {
+  let content = line;
+  let style = '';
+  const align = /^\{align=(left|center|right|justify)\}/.exec(content);
+  if (align) {
+    style = ' style="text-align: ' + align[1] + '"';
+    content = content.slice(align[0].length);
+  }
+
+  let tag = 'div';
+  let heading = /^(#{1,3})\s+(.*)$/.exec(content);
+  if (heading) {
+    tag = 'h' + heading[1].length;
+    content = heading[2];
+  }
+  const rendered = content.length ? renderInline(content) : '<br>';
+  return '<' + tag + style + '>' + rendered + '</' + tag + '>';
+}
+
+function markdownToNotesHtml(text) {
+  const source = String(text);
+  validateNotesMarkdown(source);
+  const lines = source.split('\n');
+  let html = '';
+  let i = 0;
+  while (i < lines.length) {
+    if (/^```/.test(lines[i])) {
+      let close = i + 1;
+      while (close < lines.length && !/^```\s*$/.test(lines[close])) close++;
+      if (close < lines.length) {
+        html += '<pre>' + escapeHtml(lines.slice(i + 1, close).join('\n')) + '</pre>';
+        i = close + 1;
+        continue;
+      }
+    }
+
+    const list = parseListLine(lines[i]);
+    if (list) {
+      if (list.level !== 0) formatError('List nesting', 'a nested item needs a parent item');
+      const sequence = listSequenceToHtml(lines, i, 0);
+      html += sequence.html;
+      i = sequence.index;
+      continue;
+    }
+
+    html += paragraphToHtml(lines[i]);
+    i++;
+  }
+  return html;
+}
+
+function firstVisibleLine(text) {
+  const lines = String(text).split('\n');
+  let inFence = false;
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i].trim();
+    if (/^```/.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (!line) continue;
+    line = line.replace(/^\{align=(?:left|center|right|justify)\}/, '');
+    line = line.replace(/^#{1,3}\s+/, '');
+    line = line.replace(/^(?:\* |\d+\. )/, '');
+    line = line.replace(/\[([^\]]+)\]\{[^}]+\}/g, '$1');
+    line = line.replace(/\*\*([^*]+)\*\*/g, '$1');
+    line = line.replace(/\*([^*]+)\*/g, '$1');
+    line = line.replace(/\+\+([^+]+)\+\+/g, '$1');
+    line = line.replace(/~~([^~]+)~~/g, '$1');
+    if (line) return line;
+  }
+  return '';
+}
+
+// Compatibility name used by earlier callers and tests.
+function linesToBodyHtml(text) {
+  return markdownToNotesHtml(text);
+}
+
 // One <div> per line: a bare "\n" is whitespace in HTML and would collapse the
 // user's paragraphs into a single run-on line.
 function toHtml(text) {
@@ -437,7 +845,8 @@ function escapeHtml(text) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 // Duplicated verbatim from list_notes.js's toPlainText(). Notes/JXA scripts
@@ -481,4 +890,18 @@ function fail(message) {
     text.dataUsingEncoding($.NSUTF8StringEncoding)
   );
   $.exit(1);
+}
+
+// `module` does not exist under `osascript -l JavaScript`, so this is a
+// no-op there -- it exists only so tests/test_note_body_conversion.js can
+// `require()` the pure functions above under plain Node, with no Notes.app
+// and no Automation grant. See specs/006-notes-template-format-fix/research.md.
+if (typeof module !== 'undefined') {
+  module.exports = {
+    dedupTitleLine,
+    firstVisibleLine,
+    linesToBodyHtml,
+    markdownToNotesHtml,
+    validateNotesMarkdown,
+  };
 }

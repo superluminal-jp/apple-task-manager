@@ -216,7 +216,7 @@ check "ensure_folder.js contains no folder deletion path" "$c"
 SCRUM_TEMPLATES="$REPO_ROOT/scrum/templates"
 for template in product-goal definition-of-done sprint-planning daily-scrum \
   sprint-review sprint-retrospective impediment-log decision-rights; do
-  FILE="$SCRUM_TEMPLATES/$template.txt"
+  FILE="$SCRUM_TEMPLATES/$template.md"
   [ -f "$FILE" ] && c=1 || c=0
   check "Scrum workspace ships $template template" "$c"
 
@@ -224,17 +224,49 @@ for template in product-goal definition-of-done sprint-planning daily-scrum \
   check "$template template uses placeholders instead of invented facts" "$c"
 done
 
+# Templates are Markdown now (spec 006) -- .txt must be gone, not just .md present.
+ls "$SCRUM_TEMPLATES"/*.txt >/dev/null 2>&1 && c=0 || c=1
+check "no .txt templates remain in scrum/templates (spec 006 Markdown migration)" "$c"
+
 for template in product-goal definition-of-done sprint-planning daily-scrum \
   sprint-review sprint-retrospective; do
-  grep -q '分類: Scrum定義' "$SCRUM_TEMPLATES/$template.txt" 2>/dev/null && c=1 || c=0
+  grep -q '分類: Scrum定義' "$SCRUM_TEMPLATES/$template.md" 2>/dev/null && c=1 || c=0
   check "$template identifies its Scrum-defined basis" "$c"
 done
 
 for template in impediment-log decision-rights; do
-  grep -q '分類: 補助プラクティス' "$SCRUM_TEMPLATES/$template.txt" 2>/dev/null &&
-    grep -q '必須' "$SCRUM_TEMPLATES/$template.txt" 2>/dev/null && c=1 || c=0
+  grep -q '分類: 補助プラクティス' "$SCRUM_TEMPLATES/$template.md" 2>/dev/null &&
+    grep -q '必須' "$SCRUM_TEMPLATES/$template.md" 2>/dev/null && c=1 || c=0
   check "$template is clearly supplemental rather than mandatory Scrum" "$c"
 done
+
+# Active templates use the supported Bulleted List marker. A leading dash is
+# Notes' distinct Dashed List request and must not be approximated as bullets.
+grep -qE '^\* ' "$SCRUM_TEMPLATES/definition-of-done.md" 2>/dev/null && c=1 || c=0
+check "definition-of-done template uses supported Bulleted List syntax" "$c"
+
+grep -R -qE '^- |^- \[[ xX]\]' "$SCRUM_TEMPLATES" 2>/dev/null && c=0 || c=1
+check "active Scrum templates contain no unsupported Dashed List or Checklist markers" "$c"
+
+# Confirmed by live experiment (specs/006-notes-template-format-fix/research.md
+# "Root cause, corrected"): passing `name` to app.Note() alongside a body that
+# already starts with <h1>{title}</h1> makes Notes.app inject its own extra
+# plain-text title line -- this is the actual cause of every reported doubled
+# title, independent of what --text contains. create() must construct the
+# note from `body` alone.
+grep -q 'app.Note({ body: body })' "$SKILLS/apple-notes/scripts/write_note.js" 2>/dev/null && c=1 || c=0
+check "create() does not pass name alongside body (avoids Notes' own title-duplication)" "$c"
+
+grep -q 'function dedupTitleLine' "$SKILLS/apple-notes/scripts/write_note.js" 2>/dev/null && c=1 || c=0
+check "write_note.js exposes dedupTitleLine for a caller-repeated title line" "$c"
+
+grep -q 'function linesToBodyHtml' "$SKILLS/apple-notes/scripts/write_note.js" 2>/dev/null && c=1 || c=0
+check "write_note.js exposes linesToBodyHtml for Markdown-list checklist rendering" "$c"
+
+grep -q 'function validateNotesMarkdown' "$SKILLS/apple-notes/scripts/write_note.js" 2>/dev/null &&
+  grep -q 'function markdownToNotesHtml' "$SKILLS/apple-notes/scripts/write_note.js" 2>/dev/null &&
+  grep -q 'function firstVisibleLine' "$SKILLS/apple-notes/scripts/write_note.js" 2>/dev/null && c=1 || c=0
+check "write_note.js exposes pure validation, Markdown conversion, and visible-name helpers" "$c"
 
 grep -q 'Product Backlog' "$REPO_ROOT/README.md" 2>/dev/null &&
   grep -q 'Sprint Backlog' "$REPO_ROOT/README.md" 2>/dev/null &&
@@ -270,24 +302,24 @@ code_only() { grep -vE '^\s*//' "$1" 2>/dev/null; }
 
 # EventKit deletes via EKEventStore.remove(_:commit:).
 code_only "$SKILLS/apple-reminders/scripts/main.swift" |
-  grep -Eq '\.remove\s*\(|\bremoveReminder|EKSpan' && c=0 || c=1
+  grep -E '\.remove\s*\(|\bremoveReminder|EKSpan' >/dev/null && c=0 || c=1
 check "main.swift contains no deletion path" "$c"
 
 code_only "$SKILLS/apple-reminders/scripts/main.swift" |
-  grep -Eq '"delete"' && c=0 || c=1
+  grep -E '"delete"' >/dev/null && c=0 || c=1
 check "remind-cli exposes no delete command" "$c"
 
 # Reminders still carries no deletion path at all (unchanged by ADR 0007,
 # which is Notes-only -- spec 005's FR-012/Assumptions explicitly keep
 # Reminders out of scope).
 code_only "$SKILLS/apple-reminders/scripts/main.swift" |
-  grep -Eq '\bdelete\s*\(' && c=0 || c=1
+  grep -E '\bdelete\s*\(' >/dev/null && c=0 || c=1
 check "apple-reminders scripts carry no deletion path" "$c"
 
 # Notes now has a deletion path (ADR 0007), but it must be reachable only via
 # app.delete(note) -- the JXA idiom this script uses -- and never bypassed.
 code_only "$SKILLS/apple-notes/scripts/write_note.js" |
-  grep -Eq 'app\.delete\(note\)' && c=1 || c=0
+  grep -E 'app\.delete\(note\)' >/dev/null && c=1 || c=0
 check "write_note.js's deletion path uses the app.delete(note) JXA idiom" "$c"
 
 NOTES_WRITE_SCRIPT="$SKILLS/apple-notes/scripts/write_note.js"
@@ -309,7 +341,23 @@ guard_precedes_action() {
   ' "$NOTES_WRITE_SCRIPT"
 }
 
-[ "$(guard_precedes_action '^function overwrite' 'note\\.body = opts\\.overwriteHtml')" = "1" ] && c=1 || c=0
+conversion_precedes_action() {
+  local func_start="$1" action="$2"
+  awk -v start="$func_start" -v action="$action" '
+    $0 ~ start { infunc=1 }
+    infunc && /markdownToNotesHtml/ { converted=1 }
+    infunc && $0 ~ action { print converted ? "1" : "0"; exit }
+    infunc && /^}/ { infunc=0 }
+  ' "$NOTES_WRITE_SCRIPT"
+}
+
+[ "$(conversion_precedes_action '^function create' 'folder\.notes\.push')" = "1" ] && c=1 || c=0
+check "create() converts and validates Markdown before creating a Notes record" "$c"
+
+[ "$(conversion_precedes_action '^function overwrite' 'note\.name =')" = "1" ] && c=1 || c=0
+check "overwrite() converts and validates Markdown before assigning note fields" "$c"
+
+[ "$(guard_precedes_action '^function overwrite' 'note\\.body =')" = "1" ] && c=1 || c=0
 check "overwrite() checks the hash gate and fails closed before writing the new body" "$c"
 
 [ "$(guard_precedes_action '^function deleteNote' 'app\\.delete\\(note\\)')" = "1" ] && c=1 || c=0
@@ -319,10 +367,10 @@ check "deleteNote() checks the hash gate and fails closed before deleting" "$c"
 # existing note's body (append, --replace-block) must still be derived from
 # its current contents -- either inline (`note.body = note.body() + ...`) or
 # via a variable this file built from a `const body = note.body()` read.
-# opts.overwriteHtml is the one deliberate exception -- a caller-supplied
-# whole-new-body -- and its safety is checked separately above (the hash
-# gate), not by derivation from the old body (there is none; that's the
-# point of an overwrite).
+# The overwrite assignment from a precomputed converted body is the one
+# deliberate exception -- a caller-supplied whole-new-body -- and its safety
+# is checked separately above (the hash gate), not by derivation from the old
+# body (there is none; that's the point of an overwrite).
 BODY_WRITES=$(code_only "$NOTES_WRITE_SCRIPT" | grep -E 'note\.body\s*=')
 BODY_WRITES_SAFE=1
 if [ -z "$BODY_WRITES" ]; then
@@ -330,8 +378,8 @@ if [ -z "$BODY_WRITES" ]; then
 else
   while IFS= read -r line; do
     case "$line" in
-    *'note.body()'*) ;;                    # reads and writes in the same statement
-    *'note.body = opts.overwriteHtml'*) ;; # the gated overwrite path, checked above
+    *'note.body()'*) ;;               # reads and writes in the same statement
+    *'note.body = convertedHtml'*) ;; # the gated overwrite path, checked above
     *'note.body = newBody'*)
       grep -q 'const body = note\.body()' "$NOTES_WRITE_SCRIPT" 2>/dev/null || BODY_WRITES_SAFE=0
       ;;
@@ -352,7 +400,7 @@ check "write_note.js escapes text before it enters the HTML body" "$c"
 # it turns success into a false failure and invites a duplicate retry.
 for script in list_notes.js write_note.js; do
   code_only "$SKILLS/apple-notes/scripts/$script" |
-    grep -Eq 'note\.container' && c=0 || c=1
+    grep -E 'note\.container' >/dev/null && c=0 || c=1
   check "$script does not resolve a note folder through note.container" "$c"
 
   grep -q 'folderNameForId' "$SKILLS/apple-notes/scripts/$script" 2>/dev/null && c=1 || c=0

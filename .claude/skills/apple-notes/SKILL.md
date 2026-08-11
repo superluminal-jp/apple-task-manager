@@ -56,11 +56,12 @@ it as opaque.
   of retrospectives fetched in one call is a wall of markup nobody reads.
 - `--plaintext` strips the markup for reading. Never round-trip that back into
   a body — it is lossy by construction.
-- Text written into a note is escaped and wrapped in one `<div>` per line. A
-  bare newline is whitespace in HTML and would collapse paragraphs into a
-  run-on line.
+- Plain text used by append and named-block operations is escaped and wrapped
+  in one `<div>` per line. Create and whole-body overwrite accept the safe
+  Markdown subset documented below and convert it to Notes-compatible HTML.
 - Notes derives the displayed title from the **first line of the body**, not
-  from `name`. `write_note.js` sets both.
+  from `name`. At creation, `write_note.js` supplies only a body beginning with
+  one `<h1>`; supplying `name` as well makes Notes inject a duplicate line.
 
 There is no query language. Filtering a folder means fetching it and filtering
 in the caller — fine for a working folder, slow across a large account. Prefer
@@ -124,6 +125,78 @@ conditionally replace the whole body or delete the note entirely via
 below). The old unconditional prohibition is gone; a hash gate replaces it,
 not an open door — a note is still prose the user wrote, and a bad overwrite
 still has no undo this script controls.
+
+### Safe Markdown formatting for create and overwrite
+
+`create()` no longer passes `name` to `app.Note({...})` — only `body` (which
+still starts with `<h1>{title}</h1>`). Passing `name` alongside `body` at
+creation time made Notes.app inject its own extra, plain title line
+*unconditionally*, regardless of what `--text` contained — confirmed by direct
+experiment (three throwaway notes) during
+[spec 006](../../../specs/006-notes-template-format-fix/research.md#decision-root-cause-of-the-reported-bug),
+after an earlier, narrower fix (only stripping a caller-repeated title line)
+turned out not to be sufficient on its own. Notes still derives both the
+display title and `note.name()` correctly from the body's first line with no
+`name` set.
+
+On top of that structural fix, these rules apply to `create()`'s
+`--text`/`--text-stdin` and to hash-gated `--overwrite-stdin`:
+
+- **Title dedup** (`create()`'s `--text`/`--text-stdin` only): if the
+  supplied text's first line (plain or `# Title`), trimmed, exactly matches
+  `--title`, trimmed, that line is dropped before conversion. Nothing stops a caller from also
+  typing the title as literal text, so this remains defense in depth on top
+  of the `name` fix above. A first line that only resembles the title (e.g.
+  has a suffix in parentheses) is not touched; only an exact match counts.
+  `overwrite()` (`--overwrite-stdin`) does not need this rule — it sets
+  `note.body` via plain property assignment on an already-existing note,
+  which does not trigger Notes' title-injection behavior.
+- **Validate and convert before writing**: the complete input is validated and
+  converted before `folder.notes.push`, `note.name =`, or `note.body =`. An
+  unsupported format or invalid attribute cannot create a partial note or
+  partially replace an existing one. The overwrite hash check remains
+  mandatory and occurs after conversion but before assignment.
+
+Supported input syntax:
+
+| Input | Notes format |
+|---|---|
+| `# Title`, `## Heading`, `### Subheading`, plain line | Title, Heading, Subheading, Body |
+| fenced block with triple backticks | Monostyled |
+| `**bold**`, `*italic*`, `++underline++`, `~~strike~~` | Bold, Italic, Underline, Strikethrough |
+| `[text]{color=#RRGGBB size=24}` | Text color and/or size (1–512 px) |
+| `{align=left|center|right|justify}text` | Paragraph alignment |
+| `* item`, `1. item` | Bulleted List, Numbered List |
+| two spaces before a list marker; an indented unmarked line before any nested list | Nested list; item-internal line break |
+
+List nesting is limited to levels 0–8 and may not skip a level. An item
+continuation must precede that item's nested list; a later continuation is
+rejected because Notes would render it as an empty bullet. All input text
+is HTML-escaped first; only converter-generated tags and validated style values
+enter the body.
+
+Apple's Notes guide also exposes formats the public Apple Events HTML boundary
+did not preserve in the 2026-08-11 live probe. Under the selected **Option B**,
+the script does not use Accessibility/UI automation and does not count a visual
+approximation as support. It fails before writing and names the format:
+
+| Input request | Result |
+|---|---|
+| `> quote` | `Block Quote` unsupported error |
+| `==highlight==` | `Highlight` unsupported error |
+| `{font=…}`, CSS `font-family`, `<font …>` | `Font family` unsupported error |
+| `- item` | `Dashed List` unsupported error |
+| `- [ ] item` / `- [x] item` | `Checklist` unsupported error |
+
+Use `* ` for a normal Bulleted List. A dash is deliberately not treated as a
+bullet because Notes documents Dashed List as a distinct native format.
+
+`--html` (raw, caller-supplied HTML) is unaffected by the Markdown conversion
+and rejection rules — it is used
+as-is, since the caller already controls its structure. So are `--append`,
+`--append-stdin`, `--append-html`, and `--replace-block`. See
+[`specs/006-notes-template-format-fix/contracts/note-body-conversion.md`](../../../specs/006-notes-template-format-fix/contracts/note-body-conversion.md)
+for the exact input → output mapping and worked examples.
 
 ### Editing a named block in place
 
@@ -212,9 +285,9 @@ for the governing rule.
 ## The project registry
 
 Multi-project workspaces need somewhere to record which projects exist, their
-Notes-folder/Reminders-list names, and which is current. Because `write_note.js`
-can only create or append — never replace a body — the registry is not a
-single record but an **append-only event log**: a dedicated Notes note holding
+Notes-folder/Reminders-list names, and which is current. Although
+`write_note.js` has a separately approved, hash-gated whole-body overwrite,
+the registry deliberately uses an **append-only event log**: a dedicated Notes note holding
 one small `--- projects ---` block per fact (`register` a project, or
 `set-current` one). `project_registry.py` folds every block into current state;
 it never calls `osascript` itself.
@@ -299,6 +372,9 @@ error and which of the two permissions above is the likely cause.
 
 ## Sources
 
+- Notes text styles, font/color/size, highlighting, and alignment — [Format notes on Mac](https://support.apple.com/guide/notes/format-notes-apd1955d3b21/mac)
+- Bulleted, Dashed, Numbered, Checklist, nesting, and item line breaks — [Add lists in Notes on Mac](https://support.apple.com/guide/notes/add-lists-apd93c815aa0/4.13/mac/26)
+- Title, Heading, Subheading, Body, Monostyled, and Block Quote shortcuts — [Keyboard shortcuts and gestures in Notes on Mac](https://support.apple.com/guide/notes/keyboard-shortcuts-and-gestures-apd46c25187e/mac)
 - No official route beyond AppleScript — [Apple Developer Forums, "Interacting with the Notes application"](https://developer.apple.com/forums/thread/775692)
 - Notes AppleScript dictionary (`note`: `name`, `id`, `container`, `body`, `creation date`, `modification date`) — [The Notes Application](https://www.macosxautomation.com/applescript/notes/index.html), [The Note Class](https://www.macosxautomation.com/applescript/notes/04.html)
 - "Add Link" documented targets (Safari, Books, Podcasts — no Reminders) — [Add links in Notes on Mac](https://support.apple.com/guide/notes/apde615d29c2/mac)

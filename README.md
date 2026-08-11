@@ -208,7 +208,7 @@ requests (weekly planning, daily check-ins, solo retrospectives)」）。
 | 成果物 | 担当 |
 | --- | --- |
 | `apple-reminders` スキル | EventKit の公開範囲、ビルド手順、Reminders 権限、`--- scrum ---` ブロックの書式。`main.swift`（`remind-cli`）・`Info.plist`・`build.sh`・`scrum_block.py` を同梱 |
-| `apple-notes` スキル | Notes の HTML 本文モデル、macOS 限定であること、リンク規約、複数プロジェクトのレジストリ規約。`list_notes.js`・`write_note.js`・`ensure_folder.js`（`--parent-id` でサブフォルダ対応）・`project_registry.py` を同梱 |
+| `apple-notes` スキル | Notes の HTML 本文モデル、安全なMarkdown→Notes標準書式変換、macOS 限定であること、リンク規約、複数プロジェクトのレジストリ規約。`list_notes.js`・`write_note.js`・`ensure_folder.js`（`--parent-id` でサブフォルダ対応）・`project_registry.py` を同梱 |
 | `apple-reminders-operator` / `apple-notes-operator` サブエージェント | 上記スキルを `skills:` で読み込み、生の JSON／HTML を会話に入れずに結論だけ返す。`tools` から `Edit`・`Write` を外してあるため、リポジトリのファイルを変更できない |
 
 §1 の設計との対応：
@@ -319,12 +319,28 @@ osascript -l JavaScript "$N/ensure_folder.js" --name "Sprint 7" --parent-id "<�
 同名のサブフォルダを持ちうるため、名前だけでは一意に定まらない。`write_note.js`
 は名前指定が曖昧な場合は拒否するようになっている（黙って先着1件を選ばない）。
 
-Notes用の再利用可能な本文は [`scrum/templates/`](scrum/templates/) に置く。
-Product Goal、Definition of Done、Sprint Planning、Daily Scrum、Sprint Review、
-Sprint Retrospectiveの6つはScrum Guideで定義されたコミットメント／イベントに
-基づく。障害記録と決定権記録は有用な**補助プラクティス**であり、Scrumが必須と
-する作成物ではない。テンプレートはすべて未記入欄で、Product Goalや作業、担当、
-日付を自動生成しない。
+Notes用の再利用可能な本文は [`scrum/templates/`](scrum/templates/) にMarkdown
+ファイル（`.md`）として置く。Product Goal、Definition of Done、Sprint Planning、
+Daily Scrum、Sprint Review、Sprint Retrospectiveの6つはScrum Guideで定義された
+コミットメント／イベントに基づく。障害記録と決定権記録は有用な**補助プラクティス**
+であり、Scrumが必須とする作成物ではない。テンプレートはすべて未記入欄で、
+Product Goalや作業、担当、日付を自動生成しない。箇条書きの記入欄は
+対応済みのMarkdown記法（`* `）で書かれており、記入済みの内容をそのまま
+`write_note.js --text`/`--text-stdin`（新規作成）や `--overwrite-stdin`
+（全文置換での修正）に渡すと、箇条書きとして実際の `<ul><li>` に変換される
+（詳細は
+[`.claude/skills/apple-notes/SKILL.md`](.claude/skills/apple-notes/SKILL.md)
+の「Safe Markdown formatting for create and overwrite」を参照）。
+
+同じ経路は、`#`/`##`/`###`、fenced code、太字・斜体・下線・取り消し線、
+文字色・サイズ、段落配置、Bulleted／Numbered Listと入れ子をallow-list方式で
+Notes標準書式へ変換する。ユーザー文字列はHTMLとして実行せずescapeする。
+Apple公式には存在するが公開Apple Eventsの実機プローブで保持されなかった
+Block Quote、Highlight、Font family、Dashed List、Checklistは、UI自動化や
+見た目だけの近似を使わず、ノート作成・置換より前に書式名付きエラーとする。
+詳細な入力契約は
+[`note-body-conversion.md`](specs/006-notes-template-format-fix/contracts/note-body-conversion.md)
+を参照。
 
 各ノートは既存の `write_note.js` を1回ずつ呼んで作成する。一括作成や同名ノートの
 上書きは行わず、先に対象フォルダを確認する。削除はNotes／Remindersの画面で
@@ -368,9 +384,17 @@ Sprint Retrospectiveの6つはScrum Guideで定義されたコミットメント
 - 成果物間の契約（エージェントがスキルを preload するか、`Edit`/`Write` を
   持たないか、`build.sh` が `-sectcreate` を含むか、削除経路が無いか、
   `CLAUDE.md` が委譲と境界と vendoring の注意を明記しているか）は
-  `tests/run-apple-operators.sh` の 120 件で検証済み。`scrum_block.py` の CSV 列と
+  `tests/run-apple-operators.sh` の 168 件で検証済み。`scrum_block.py` の CSV 列と
   `flow_metrics.py` の入力は、**両方が本リポジトリにあるため実体同士を
   突き合わせる**（リテラルを信じない）。
+- `write_note.js` の新規作成・全文置換が使う純粋な文字列変換（タイトル重複行、
+  段落・インライン・配置・リスト書式、escaping、未対応書式の事前拒否）は
+  **34 件の単体テストで検証済み**（`tests/run-note-body-conversion.sh`）。
+  `ObjC`/`Application('Notes')` を呼ばない部分だけを対象にしているため、
+  `note_write_guard.py` 同様 macOS 不要で実行できる。Apple Events 経由で
+  実際にNotesへ書き込む経路はmacOS実機でプローブし、公開Apple Eventsが
+  保持する書式と保持しない書式を分けて確認した。最終実装のライブ回帰結果は
+  spec 006のquickstart／researchに記録する。
 - `product-owner-perspective` / `developers-perspective` は廃止した。
   両ファイルが `.claude/agents/` に存在しないこと、README・`CLAUDE.md` が
   これらを参照せず PO/Developers が実在する前提を明記していることは
@@ -438,8 +462,10 @@ Sprint 1 終了時点で確認する。
 
 - `calendarItemExternalIdentifier` が iCloud 同期やアカウント間移動を跨いで
   安定すること。単一端末上の作成・更新・完了では確認できない。
-- Notes の HTML チェックリストなど、構造化された複雑な本文の実表示。
-  通常テキストの escaping、追記、`--plaintext` は実機確認済みである。
+- Notesの標準Checklist、Block Quote、Highlight、Font family、Dashed Listは
+  公開Apple EventsのHTML入力で保持されないため、現行CLIでは意図的に未対応
+  （書き込み前エラー）。通常テキストのescaping、追記、`--plaintext`、および
+  対応済み書式のプローブは実機確認済みである。
 - 権限を一度拒否した状態、またはヘッドレス実行からの回復手順。Reminders と
   Notes の両アクセスが別カテゴリで動作することは確認したが、拒否経路は
   利用者のプライバシー設定を変更するためテストしていない。
