@@ -96,6 +96,10 @@ osascript -l JavaScript "$S/write_note.js" --folder "Scrum" \
 # Append
 echo "Retro action: shrink the WIP limit to 2" \
   | osascript -l JavaScript "$S/write_note.js" --id "<id>" --append-stdin
+
+# Replace one named, fenced region in place (created on first write)
+echo "status: in progress" \
+  | osascript -l JavaScript "$S/write_note.js" --id "<id>" --replace-block "status" --replace-stdin
 ```
 
 `ensure_folder.js` trims the boundary whitespace and requires a non-empty name.
@@ -111,10 +115,29 @@ has no account-selection, rename, move, bulk-create, or delete operation —
 `--parent-id` adds one new scope to the existing match/create logic, not a new
 capability class.
 
-`write_note.js` cannot delete and cannot replace a whole body — only append.
-Both are structural, not advisory. A note is prose the user wrote; a bad
-overwrite loses it with no undo outside Notes.app. If a user asks for a
-rewrite or a deletion, tell them where to click rather than working around it.
+`write_note.js` cannot delete and cannot replace a whole body — it can only
+append, or replace one named fenced region via `--replace-block` (see below).
+Both remaining limits are structural, not advisory. A note is prose the user
+wrote; a bad overwrite loses it with no undo outside Notes.app. If a user
+asks for a rewrite of free-form prose or a deletion, tell them where to click
+rather than working around it.
+
+### Editing a named block in place
+
+`--replace-block <name>` (with `--id`, plus one of `--replace <text>` /
+`--replace-stdin` / `--replace-html <html>`) finds a `--- <name> ---` … `---`
+fenced region in the note's raw HTML body and replaces exactly that span —
+never anything outside it. If the block does not exist yet, it is created
+(appended), the same "ensure" posture `ensure_folder.js`/`ensure-list` already
+take; if it exists exactly once, it is replaced; if the name matches more than
+once, or the fence is unterminated, the call refuses rather than guessing.
+This is the same fence convention already used for the `--- projects ---`
+registry blocks and for Reminders' `--- scrum ---` block — only the mechanism
+differs (Notes needs an HTML-aware splice; Reminders' body is plain text).
+
+Use this for machine-owned structured content inside a note (a status line, a
+checklist, the project registry) — not for editing a human's free-form prose,
+which stays append-only for the reason above.
 
 `write_note.js --folder <name>` matches by exact name across the whole
 account and now refuses when more than one folder shares that name, instead

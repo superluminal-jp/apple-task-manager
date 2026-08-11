@@ -18,13 +18,19 @@
 //   # append raw HTML when structure matters (a list, a table)
 //   osascript -l JavaScript write_note.js --id "<id>" --append-html "<ul><li>a</li></ul>"
 //
-// Three rules this script enforces structurally rather than by convention:
+//   # replace one named, fenced region in place -- created on first write,
+//   # replaced (not duplicated) on every write after that
+//   echo "status: in progress" \
+//     | osascript -l JavaScript write_note.js --id "<id>" --replace-block "status" --replace-stdin
+//
+// Four rules this script enforces structurally rather than by convention:
 //
 //   1. **No delete, and no whole-body replace.** A note is narrative the user
 //      wrote; the failure mode of a bad overwrite is losing prose with no undo
 //      outside Notes.app itself. Append is additive and safe to retry.
-//   2. **--id means append, never create.** An unresolvable id fails rather
-//      than creating a stray note somewhere the user will not look for it.
+//   2. **--id means append or --replace-block, never create.** An unresolvable
+//      id fails rather than creating a stray note somewhere the user will not
+//      look for it.
 //   3. **--folder matches ambiguously fail rather than picking one.** Once
 //      subfolders exist (multi-project Sprint subfolders in particular,
 //      apple-notes's `ensure_folder.js --parent-id`), two folders can share a
@@ -32,9 +38,18 @@
 //      whole account and refuses on more than one match; `--folder-id <id>`
 //      is unambiguous by construction and is the only safe choice once a
 //      collision is possible.
+//   4. **--replace-block only ever touches its own fenced region.** It finds
+//      `--- <name> ---` … `---` in the raw HTML body and replaces exactly
+//      that span -- prose outside any fence is never read as replaceable, so
+//      this cannot become a general whole-body replace by a different name.
+//      It creates the block (appends it) if absent, the same posture
+//      `scrum_block.py`'s `render_block` already takes on the Reminders side,
+//      and it refuses -- rather than guessing -- when the fence is
+//      unterminated or the block name matches more than once.
 //
-// A note body is HTML. Plain text passed to --text or --append-stdin is escaped
-// and wrapped in a <div> per line, because raw newlines do not render.
+// A note body is HTML. Plain text passed to --text, --append-stdin, or
+// --replace-stdin is escaped and wrapped in a <div> per line, because raw
+// newlines do not render.
 
 ObjC.import('stdlib');
 ObjC.import('Foundation');
@@ -44,7 +59,7 @@ function run(argv) {
   const app = Application('Notes');
 
   try {
-    const result = opts.id ? append(app, opts) : create(app, opts);
+    const result = opts.blockName ? replaceBlock(app, opts) : opts.id ? append(app, opts) : create(app, opts);
     return JSON.stringify(result, null, 2);
   } catch (error) {
     return fail(error.message);
@@ -52,7 +67,16 @@ function run(argv) {
 }
 
 function parseArgs(argv) {
-  const opts = { id: null, folder: null, folderId: null, title: null, html: null, appendHtml: null };
+  const opts = {
+    id: null,
+    folder: null,
+    folderId: null,
+    title: null,
+    html: null,
+    appendHtml: null,
+    blockName: null,
+    replaceHtml: null,
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--id') opts.id = argv[++i];
@@ -65,9 +89,24 @@ function parseArgs(argv) {
     else if (arg === '--append') opts.appendHtml = toHtml(argv[++i]);
     else if (arg === '--append-stdin') opts.appendHtml = toHtml(readStdin());
     else if (arg === '--append-html') opts.appendHtml = argv[++i];
+    else if (arg === '--replace-block') opts.blockName = argv[++i];
+    else if (arg === '--replace') opts.replaceHtml = toHtml(argv[++i]);
+    else if (arg === '--replace-stdin') opts.replaceHtml = toHtml(readStdin());
+    else if (arg === '--replace-html') opts.replaceHtml = argv[++i];
     else fail('unknown option: ' + arg);
   }
-  if (opts.id && opts.appendHtml === null) fail('--id needs one of --append / --append-stdin / --append-html');
+
+  if (opts.blockName !== null) {
+    if (!opts.id) fail('--replace-block needs --id');
+    if (opts.appendHtml !== null) fail('use --append* or --replace-block, not both');
+    if (opts.replaceHtml === null) fail('--replace-block needs one of --replace / --replace-stdin / --replace-html');
+    const name = String(opts.blockName).trim();
+    if (name.length === 0) fail('--replace-block must be non-empty');
+    opts.blockName = name;
+    return opts;
+  }
+
+  if (opts.id && opts.appendHtml === null) fail('--id needs one of --append / --append-stdin / --append-html / --replace-block');
   if (opts.folder && opts.folderId) fail('use --folder or --folder-id, not both');
   if (!opts.id && !opts.folder && !opts.folderId) fail('--folder or --folder-id is required when creating (--id appends)');
   if (!opts.id && !opts.title) fail('--title is required when creating');
@@ -117,6 +156,59 @@ function append(app, opts) {
   // append into an error that the caller might retry.
   const folderName = folderNameForId(app, opts.id);
   note.body = note.body() + opts.appendHtml;
+  return describe(note, folderName);
+}
+
+// A named block is fenced by two literal lines, written the same way toHtml()
+// would wrap them: "--- <name> ---" to open, "---" to close. Matching against
+// the raw HTML (not a stripped-down plaintext view) means the replacement can
+// splice the body by a plain string slice -- no HTML parsing, no risk of
+// mangling markup elsewhere in the note.
+function openFenceHtml(name) {
+  return '<div>--- ' + escapeHtml(name) + ' ---</div>';
+}
+const CLOSE_FENCE_HTML = '<div>---</div>';
+
+// Returns {start, end} spanning the fenced block (inclusive of both fence
+// lines) in `body`, or null if the block does not exist yet. Throws on an
+// unterminated or duplicated block rather than returning a best guess -- see
+// rule 4 in the header comment.
+function findBlock(body, name) {
+  const openTag = openFenceHtml(name);
+  const first = body.indexOf(openTag);
+  if (first === -1) return null;
+
+  const second = body.indexOf(openTag, first + openTag.length);
+  if (second !== -1) fail('block name is ambiguous in the note: ' + name);
+
+  const close = body.indexOf(CLOSE_FENCE_HTML, first + openTag.length);
+  if (close === -1) {
+    fail(
+      'unterminated block: ' + name + ' -- fix the note by hand before writing to it'
+    );
+  }
+  return { start: first, end: close + CLOSE_FENCE_HTML.length };
+}
+
+function replaceBlock(app, opts) {
+  let note;
+  try {
+    note = app.notes.byId(opts.id);
+    note.name(); // Resolve now: a bad id must fail here, not silently later.
+  } catch (error) {
+    fail('no note with id: ' + opts.id);
+  }
+  const folderName = folderNameForId(app, opts.id);
+
+  const body = note.body() || '';
+  const newBlock = openFenceHtml(opts.blockName) + opts.replaceHtml + CLOSE_FENCE_HTML;
+  const existing = findBlock(body, opts.blockName);
+
+  const newBody = existing === null
+    ? body + newBlock
+    : body.slice(0, existing.start) + newBlock + body.slice(existing.end);
+
+  note.body = newBody;
   return describe(note, folderName);
 }
 

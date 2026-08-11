@@ -274,12 +274,29 @@ code_only "$SKILLS/apple-notes/scripts/write_note.js" |
   grep -Eq '\.delete\s*\(|\bdelete\s*\(|\bremove\s*\(' && c=0 || c=1
 check "write_note.js contains no deletion path" "$c"
 
-# The same for whole-body replacement in Notes: every assignment to an existing
-# note's body must build on its current contents, so append is the only path.
-BODY_WRITES=$(code_only "$SKILLS/apple-notes/scripts/write_note.js" | grep -E 'note\.body\s*=')
-[ -n "$BODY_WRITES" ] &&
-  ! printf '%s\n' "$BODY_WRITES" | grep -qv 'note\.body()' && c=1 || c=0
-check "write_note.js only appends, never replaces a body" "$c"
+# The same for whole-body replacement in Notes: every assignment to an
+# existing note's body must be derived from its current contents -- either
+# inline (`note.body = note.body() + ...`, the append path) or via a variable
+# this file itself built from a `const body = note.body()` read (the
+# --replace-block path's targeted splice). Never a bare caller-supplied value.
+NOTES_WRITE_SCRIPT="$SKILLS/apple-notes/scripts/write_note.js"
+BODY_WRITES=$(code_only "$NOTES_WRITE_SCRIPT" | grep -E 'note\.body\s*=')
+BODY_WRITES_SAFE=1
+if [ -z "$BODY_WRITES" ]; then
+  BODY_WRITES_SAFE=0
+else
+  while IFS= read -r line; do
+    case "$line" in
+    *'note.body()'*) ;; # reads and writes in the same statement
+    *'note.body = newBody'*)
+      grep -q 'const body = note\.body()' "$NOTES_WRITE_SCRIPT" 2>/dev/null || BODY_WRITES_SAFE=0
+      ;;
+    *) BODY_WRITES_SAFE=0 ;;
+    esac
+  done <<<"$BODY_WRITES"
+fi
+[ "$BODY_WRITES_SAFE" = "1" ] && c=1 || c=0
+check "write_note.js never writes a body that was not derived from reading the existing one" "$c"
 
 # A note body is HTML: unescaped user text would swallow the rest of the note.
 grep -q 'escapeHtml' "$SKILLS/apple-notes/scripts/write_note.js" 2>/dev/null && c=1 || c=0
@@ -502,6 +519,34 @@ check "apple-notes SKILL.md documents --folder-id for colliding folder names" "$
 
 grep -qi 'folder-id' "$AGENTS/apple-notes-operator.md" 2>/dev/null && c=1 || c=0
 check "apple-notes-operator is told to use --folder-id for Sprint subfolders" "$c"
+
+# --- write_note.js --replace-block (targeted in-place editing) -------------
+
+grep -q -- '--replace-block' "$NOTES_WRITE" 2>/dev/null && c=1 || c=0
+check "write_note.js accepts --replace-block" "$c"
+
+for flag in '--replace ' '--replace-stdin' '--replace-html'; do
+  grep -q -- "$flag" "$NOTES_WRITE" 2>/dev/null && c=1 || c=0
+  check "write_note.js's --replace-block accepts content via $flag" "$c"
+done
+
+# Creates the block if absent (upsert), same posture as scrum_block.py's
+# render_block -- a caller should not have to know whether this is the first
+# write.
+grep -q 'findBlock' "$NOTES_WRITE" 2>/dev/null &&
+  grep -Eq 'match === null' "$NOTES_WRITE" 2>/dev/null && c=1 || c=0
+check "write_note.js creates a named block on first write (upsert)" "$c"
+
+# Refuses rather than guesses on an unterminated or duplicated block, the same
+# posture scrum_block.py already takes for the Reminders side.
+grep -qi 'unterminated block' "$NOTES_WRITE" 2>/dev/null && c=1 || c=0
+check "write_note.js refuses an unterminated named block" "$c"
+
+grep -qi 'block name is ambiguous' "$NOTES_WRITE" 2>/dev/null && c=1 || c=0
+check "write_note.js refuses a duplicated named block" "$c"
+
+grep -qi 'replace-block' "$SKILLS/apple-notes/SKILL.md" 2>/dev/null && c=1 || c=0
+check "apple-notes SKILL.md documents --replace-block" "$c"
 
 echo
 if [ "$FAIL" -eq 0 ]; then
