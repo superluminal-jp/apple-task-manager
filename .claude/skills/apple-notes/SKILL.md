@@ -1,6 +1,6 @@
 ---
 name: apple-notes
-description: Read and write Apple Notes from macOS through the bundled osascript (JXA) scripts — ensure a folder (optionally as a subfolder of another), list a folder as JSON, fetch or resolve one note by id, create a note, append to an existing one, and fold a multi-project registry kept in a Notes note. Use when a request needs content out of Notes.app, when a stable folder must be prepared, when prose has to be recorded there (a goal, a decision, a retrospective, a log entry), when a note must be linked to a reminder, or when a Scrum project must be registered or resolved by name.
+description: Read and write Apple Notes from macOS through the bundled osascript (JXA) scripts — ensure a folder (optionally as a subfolder of another), list a folder as JSON, fetch or resolve one note by id, create a note, append to an existing one, conditionally overwrite or delete a note under a hash gate, and fold a multi-project registry kept in a Notes note. Use when a request needs content out of Notes.app, when a stable folder must be prepared, when prose has to be recorded there (a goal, a decision, a retrospective, a log entry), when a note must be linked to a reminder, or when a Scrum project must be registered or resolved by name.
 when_to_use: Any request touching Apple Notes or Notes.app on macOS — "what does my Sprint Goal note say", "write this up in Notes", "append today's decision", "find the retro note". Also load it before writing any AppleScript or JXA against Notes, so the HTML body model and the macOS-only constraint are known first.
 ---
 
@@ -72,7 +72,8 @@ a dedicated folder to a search over everything.
 |---|---|
 | `scripts/ensure_folder.js` | Create or reuse one exact-name folder in the default account, or, with `--parent-id`, as a direct child of another folder |
 | `scripts/list_notes.js` | A folder (or one id, or `--folders`) as JSON |
-| `scripts/write_note.js` | Create a note (by folder name or `--folder-id`), or append to one by id |
+| `scripts/write_note.js` | Create a note (by folder name or `--folder-id`), append to one by id, or — under a hash gate — overwrite or delete one; see "Conditional overwrite and delete" below |
+| `scripts/note_write_guard.py` | Computes the SHA-256 hash gate `--overwrite-stdin`/`--delete` check against; see "Conditional overwrite and delete" below |
 | `scripts/project_registry.py` | Fold the append-only multi-project registry kept inside a Notes note; see "The project registry" below |
 
 ```bash
@@ -115,12 +116,14 @@ has no account-selection, rename, move, bulk-create, or delete operation —
 `--parent-id` adds one new scope to the existing match/create logic, not a new
 capability class.
 
-`write_note.js` cannot delete and cannot replace a whole body — it can only
-append, or replace one named fenced region via `--replace-block` (see below).
-Both remaining limits are structural, not advisory. A note is prose the user
-wrote; a bad overwrite loses it with no undo outside Notes.app. If a user
-asks for a rewrite of free-form prose or a deletion, tell them where to click
-rather than working around it.
+`write_note.js` can append, replace one named fenced region via
+`--replace-block` (see below), or — as of
+[ADR 0007](../../../docs/adr/0007-conditional-overwrite-delete-for-notes.md) —
+conditionally replace the whole body or delete the note entirely via
+`--overwrite-stdin` / `--delete` (see "Conditional overwrite and delete"
+below). The old unconditional prohibition is gone; a hash gate replaces it,
+not an open door — a note is still prose the user wrote, and a bad overwrite
+still has no undo this script controls.
 
 ### Editing a named block in place
 
@@ -136,8 +139,8 @@ registry blocks and for Reminders' `--- scrum ---` block — only the mechanism
 differs (Notes needs an HTML-aware splice; Reminders' body is plain text).
 
 Use this for machine-owned structured content inside a note (a status line, a
-checklist, the project registry) — not for editing a human's free-form prose,
-which stays append-only for the reason above.
+checklist, the project registry) — not for editing a human's free-form prose;
+free-form prose has its own, separate mechanism below.
 
 `write_note.js --folder <name>` matches by exact name across the whole
 account and now refuses when more than one folder shares that name, instead
@@ -146,6 +149,65 @@ across different projects (every project's own "Sprint 7"), use `--folder-id
 <id>` instead — the id `ensure_folder.js` returned for that folder — which is
 unambiguous by construction. See
 `specs/004-multi-project-scrum/contracts/apple-notes-write-note-folder-id.md`.
+
+### Conditional overwrite and delete
+
+`--overwrite-stdin` (replace the whole body from stdin) and `--delete`
+(remove the note) both require `--expect-hash <sha256>` — the SHA-256
+hexdigest of the note's plaintext body, computed from a `--plaintext` read
+taken immediately beforehand:
+
+```bash
+S="${CLAUDE_SKILL_DIR}/scripts"
+
+CURRENT=$(osascript -l JavaScript "$S/list_notes.js" --id "<id>" --plaintext --field plaintext)
+HASH=$(printf '%s' "$CURRENT" | python3 "$S/note_write_guard.py" hash)
+
+# Whole-body replace
+echo "corrected content" | osascript -l JavaScript "$S/write_note.js" --id "<id>" \
+  --overwrite-stdin --expect-hash "$HASH"
+
+# Delete
+osascript -l JavaScript "$S/write_note.js" --id "<id>" --delete --expect-hash "$HASH"
+```
+
+Before either call, `write_note.js` recomputes the hash of the note's
+*current* plaintext body (via `note_write_guard.py decide`, run as a
+subprocess with the current body piped in through a temp file) and compares
+it to `--expect-hash`. If they don't match — the note changed since the
+caller last read it — the call refuses: **no write happens, at all**, and the
+command exits non-zero. This is optimistic concurrency, not a permission
+check: a caller that read the note seconds ago and is correctly, deliberately
+overwriting it sails through. What it stops is silently clobbering a note
+that changed out from under the caller between the read and the write.
+
+**This is a real, irreversible capability.** Unlike append and
+`--replace-block`, a wrong `--overwrite-stdin` or `--delete` call can destroy
+a human's prose. The hash gate does not, and cannot, protect against a
+caller that read the note correctly and then made the wrong call anyway — no
+hook can inspect what an Apple Event actually sends (`CLAUDE.md`, "破壊的操作").
+**Before calling either flag, present the replacement content — or, for
+`--delete`, the note being deleted — to the user and get their explicit
+approval, every time.** This is a convention this script cannot enforce; it
+is the operator's responsibility, spelled out again in
+`apple-notes-operator`'s own instructions.
+
+**Deletion recoverability (verified 2026-08-11, live, on this Mac):**
+`--delete` moves the note into Notes.app's "Recently Deleted" folder — the
+same place a UI-driven delete lands it, confirmed by re-reading the same note
+id out of that folder immediately after deleting it via this script. Apple's
+own support documentation states notes stay there for up to 30 days before
+permanent removal; this session did not (could not, in one sitting) verify
+the 30-day figure itself, only that the note lands there at all. Do not
+extend this to "always recoverable" — a purged or iCloud-sync-boundary case
+was not tested.
+
+See
+[ADR 0007](../../../docs/adr/0007-conditional-overwrite-delete-for-notes.md),
+[specs/005-notes-conditional-overwrite](../../../specs/005-notes-conditional-overwrite/)
+for the full design and live-verification evidence, and
+[Constitution](../../../.specify/memory/constitution.md) v2.0.0 Principle I
+for the governing rule.
 
 ## The project registry
 

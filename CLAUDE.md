@@ -104,15 +104,25 @@ Reminders/Notes を操作する前に**どのプロジェクトを対象にす�
 
 ## 破壊的操作
 
-**Reminders と Notes の削除・全文上書きは行わない。** どちらの書き込み経路にも
-削除機能が存在せず（`remind-cli` に `delete` コマンドが無く、`write_note.js` は
-append のみ）、これは指示ではなく構造である。インライン AppleScript や
-その場限りの Swift で迂回しない。
+**Reminders の削除・全文上書きは行わない。** `remind-cli` に `delete` コマンドは
+無く、これは指示ではなく構造である。インライン AppleScript やその場限りの
+Swift で迂回しない。リマインダーの削除は Cycle Time の唯一の記録を失う。
 
-理由は2つ。リマインダーの削除は Cycle Time の唯一の記録を失う。そして
-**EventKit の呼び出しも Apple Event も、destructive-command フックからは
-見えない**——シェルコマンドは検査できても、それが送るメッセージは検査できない。
-利用者が削除を求めたら、アプリ上のどこを操作するかを伝える。
+**Notes の全文上書き・削除は、条件付きで可能。** `write_note.js` は
+`--overwrite-stdin`（全文置換）と `--delete`（削除）を持つが、どちらも
+`--expect-hash <sha256>` を必須とする。直前に読んだ本文のハッシュが書き込み
+直前の実際の本文と一致しない限り、ノートには一切触れない（楽観的排他制御、
+[ADR 0007](docs/adr/0007-conditional-overwrite-delete-for-notes.md)、
+[Constitution](.specify/memory/constitution.md) v2.0.0 Principle I）。この
+2つのフラグを呼ぶ前には、置き換える内容・削除対象を利用者に提示し、明示的な
+承認を得ること——コードでは強制できない運用規約であり、`apple-notes`
+SKILL.md と `apple-notes-operator` に明記されている。
+
+**それでも共通する理由**: **EventKit の呼び出しも Apple Event も、
+destructive-command フックからは見えない**——シェルコマンドは検査できても、
+それが送るメッセージは検査できない。だからこそ Reminders 側は削除機能自体を
+持たず、Notes 側はハッシュゲートと利用者承認という二重の安全策を要求する。
+利用者が Reminders の削除を求めたら、アプリ上のどこを操作するかを伝える。
 
 ## 実行環境
 
@@ -128,10 +138,12 @@ append のみ）、これは指示ではなく構造である。インライン 
 ## 検証
 
 ```sh
-bash tests/run-scrum-block.sh       # scrum_block.py の単体テスト
-bash tests/run-flow-metrics.sh      # flow_metrics.py の単体テスト（vendoring 分）
-bash tests/run-apple-operators.sh   # 成果物間の契約
-bash tests/run-scrum-role-agents.sh # PO/Developers視点エージェントを廃止したことの契約
+bash tests/run-scrum-block.sh        # scrum_block.py の単体テスト
+bash tests/run-flow-metrics.sh       # flow_metrics.py の単体テスト（vendoring 分）
+bash tests/run-apple-operators.sh    # 成果物間の契約
+bash tests/run-scrum-role-agents.sh  # PO/Developers視点エージェントを廃止したことの契約
+bash tests/run-project-registry.sh   # project_registry.py の単体テスト
+bash tests/run-note-write-guard.sh   # write_note.js の上書き・削除ハッシュゲートの単体テスト
 ```
 
 いずれも決定的で macOS を必要としない。**ネイティブコードはどちらのスイートでも

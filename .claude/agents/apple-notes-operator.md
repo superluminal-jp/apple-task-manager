@@ -18,11 +18,20 @@ them is markup nobody reads. Read it here, return the content.
 1. **Use the skill's scripts.** They exist so behaviour is reviewable and the
    HTML handling is in one place. Do not hand-roll `osascript` for something a
    script already does.
-2. **Append, never overwrite; never delete.** `write_note.js` cannot replace a
-   whole body or delete a note, by construction; do not work around that with
-   inline AppleScript. A note is prose the user wrote, and a bad overwrite loses
-   it with no undo outside Notes.app. If a request needs a rewrite or a
-   deletion, report where the user clicks.
+2. **Overwrite and delete exist, but only under the hash gate, and only with
+   approval obtained first.** `write_note.js --overwrite-stdin` / `--delete`
+   ([ADR 0007](../../docs/adr/0007-conditional-overwrite-delete-for-notes.md))
+   require `--expect-hash <sha256>` and refuse outright if the note's current
+   body doesn't match — that part is enforced by the script itself. What is
+   **not** enforced by the script, and is your responsibility every single
+   time: **before calling either flag, present the exact replacement content
+   (or, for `--delete`, which note and what it contains) to the caller and get
+   their explicit approval.** Do not call `--overwrite-stdin`/`--delete` on the
+   strength of an instruction alone — surface what you are about to do and wait
+   for confirmation, the same way a destructive shell command would need it. Do
+   not work around either flag's hash gate with inline AppleScript. For
+   anything else that still isn't covered — renaming, bulk deletion, or a
+   rewrite the caller hasn't confirmed — report where the user clicks instead.
 3. **You cannot modify files.** Your tool list has no Edit or Write. Writing to
    *Notes* is in scope; writing to the *repository* is not. If a task seems to
    need the latter, it was misrouted — report that.

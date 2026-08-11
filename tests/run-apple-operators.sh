@@ -83,12 +83,19 @@ for app in notes reminders; do
   grep -qi 'Automation' "$SKILL" 2>/dev/null && c=1 || c=0
   check "apple-$app skill documents the Automation (TCC) grant" "$c"
 
-  # The write paths refuse destructive operations by construction; the skill
-  # has to say so, or a reader will route around them with inline AppleScript
-  # or their own EventKit code. The two skills word it differently because
-  # their backends differ ("cannot delete" vs "no delete command").
-  grep -Eqi 'cannot delete|no delete command' "$SKILL" 2>/dev/null && c=1 || c=0
-  check "apple-$app skill states that deletion is unavailable" "$c"
+  # Reminders still refuses destructive operations by construction -- the
+  # skill has to say so, or a reader will route around it with their own
+  # EventKit code. Notes no longer refuses unconditionally (ADR 0007,
+  # Constitution v2.0.0 Principle I): it permits overwrite/delete under a
+  # hash gate, and the skill must document that gate instead of claiming the
+  # old absolute prohibition.
+  if [ "$app" = "reminders" ]; then
+    grep -Eqi 'no delete command' "$SKILL" 2>/dev/null && c=1 || c=0
+    check "apple-$app skill states that deletion is unavailable" "$c"
+  else
+    grep -Eqi -- '--expect-hash' "$SKILL" 2>/dev/null && c=1 || c=0
+    check "apple-$app skill documents the hash-gated overwrite/delete (ADR 0007)" "$c"
+  fi
 
   grep -q '## Sources' "$SKILL" 2>/dev/null && c=1 || c=0
   check "apple-$app skill cites its sources" "$c"
@@ -270,16 +277,52 @@ code_only "$SKILLS/apple-reminders/scripts/main.swift" |
   grep -Eq '"delete"' && c=0 || c=1
 check "remind-cli exposes no delete command" "$c"
 
-code_only "$SKILLS/apple-notes/scripts/write_note.js" |
-  grep -Eq '\.delete\s*\(|\bdelete\s*\(|\bremove\s*\(' && c=0 || c=1
-check "write_note.js contains no deletion path" "$c"
+# Reminders still carries no deletion path at all (unchanged by ADR 0007,
+# which is Notes-only -- spec 005's FR-012/Assumptions explicitly keep
+# Reminders out of scope).
+code_only "$SKILLS/apple-reminders/scripts/main.swift" |
+  grep -Eq '\bdelete\s*\(' && c=0 || c=1
+check "apple-reminders scripts carry no deletion path" "$c"
 
-# The same for whole-body replacement in Notes: every assignment to an
-# existing note's body must be derived from its current contents -- either
-# inline (`note.body = note.body() + ...`, the append path) or via a variable
-# this file itself built from a `const body = note.body()` read (the
-# --replace-block path's targeted splice). Never a bare caller-supplied value.
+# Notes now has a deletion path (ADR 0007), but it must be reachable only via
+# app.delete(note) -- the JXA idiom this script uses -- and never bypassed.
+code_only "$SKILLS/apple-notes/scripts/write_note.js" |
+  grep -Eq 'app\.delete\(note\)' && c=1 || c=0
+check "write_note.js's deletion path uses the app.delete(note) JXA idiom" "$c"
+
 NOTES_WRITE_SCRIPT="$SKILLS/apple-notes/scripts/write_note.js"
+
+# Both new destructive operations (overwrite, delete) must check the hash
+# gate (guardDecide) and fail closed before touching the note -- never skip
+# straight to the write/delete on a caller's say-so alone.
+guard_precedes_action() {
+  local func_start="$1" action="$2"
+  awk -v start="$func_start" -v action="$action" '
+    $0 ~ start { infunc=1 }
+    infunc && /guardDecide\(/ { saw_guard=1 }
+    infunc && saw_guard && /!== .allow./ { saw_check=1 }
+    infunc && $0 ~ action {
+      if (saw_guard && saw_check) print "1"; else print "0"
+      exit
+    }
+    infunc && /^}/ { infunc=0 }
+  ' "$NOTES_WRITE_SCRIPT"
+}
+
+[ "$(guard_precedes_action '^function overwrite' 'note\\.body = opts\\.overwriteHtml')" = "1" ] && c=1 || c=0
+check "overwrite() checks the hash gate and fails closed before writing the new body" "$c"
+
+[ "$(guard_precedes_action '^function deleteNote' 'app\\.delete\\(note\\)')" = "1" ] && c=1 || c=0
+check "deleteNote() checks the hash gate and fails closed before deleting" "$c"
+
+# The same for whole-body replacement in Notes: every OTHER assignment to an
+# existing note's body (append, --replace-block) must still be derived from
+# its current contents -- either inline (`note.body = note.body() + ...`) or
+# via a variable this file built from a `const body = note.body()` read.
+# opts.overwriteHtml is the one deliberate exception -- a caller-supplied
+# whole-new-body -- and its safety is checked separately above (the hash
+# gate), not by derivation from the old body (there is none; that's the
+# point of an overwrite).
 BODY_WRITES=$(code_only "$NOTES_WRITE_SCRIPT" | grep -E 'note\.body\s*=')
 BODY_WRITES_SAFE=1
 if [ -z "$BODY_WRITES" ]; then
@@ -287,7 +330,8 @@ if [ -z "$BODY_WRITES" ]; then
 else
   while IFS= read -r line; do
     case "$line" in
-    *'note.body()'*) ;; # reads and writes in the same statement
+    *'note.body()'*) ;;                    # reads and writes in the same statement
+    *'note.body = opts.overwriteHtml'*) ;; # the gated overwrite path, checked above
     *'note.body = newBody'*)
       grep -q 'const body = note\.body()' "$NOTES_WRITE_SCRIPT" 2>/dev/null || BODY_WRITES_SAFE=0
       ;;
@@ -296,7 +340,7 @@ else
   done <<<"$BODY_WRITES"
 fi
 [ "$BODY_WRITES_SAFE" = "1" ] && c=1 || c=0
-check "write_note.js never writes a body that was not derived from reading the existing one" "$c"
+check "write_note.js's append/replace-block paths still derive from the existing body" "$c"
 
 # A note body is HTML: unescaped user text would swallow the rest of the note.
 grep -q 'escapeHtml' "$SKILLS/apple-notes/scripts/write_note.js" 2>/dev/null && c=1 || c=0
